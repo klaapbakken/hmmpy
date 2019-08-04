@@ -10,7 +10,7 @@ from hmmpy.hmm import (
     HiddenMarkovModel,
 )
 
-TRANSITION_MATRIX = np.ones((3, 3)) * 1 / 3
+TRANSITION_MATRIX = np.ones((10, 10)) * 1 / 10
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def transition_probability():
         P = TRANSITION_MATRIX
         return P[x, y]
 
-    transition_probability = TransitionProbability(func, 3)
+    transition_probability = TransitionProbability(func, 10)
     return transition_probability
 
 
@@ -28,32 +28,32 @@ def emission_probability():
     def func(z, x):
         return norm.pdf(z, loc=x)
 
-    emission_probability = EmissionProbability(func, 3)
+    emission_probability = EmissionProbability(func, 10)
     return emission_probability
 
 
 @pytest.fixture
 def initial_probability() -> float:
     def func(x):
-        return 1 / 3
+        return 1 / 10
 
-    initial_probability = InitialProbability(func, 3)
+    initial_probability = InitialProbability(func, 10)
     return initial_probability
 
 
 @pytest.fixture
 def hidden_markov_model():
     def func1(x, y):
-        P = np.ones((3, 3)) * 1 / 3
+        P = TRANSITION_MATRIX
         return P[x, y]
 
     def func2(z, x):
         return norm.pdf(z, loc=x)
 
     def func3(x):
-        return 1 / 3
+        return 1 / 10
 
-    return HiddenMarkovModel(func1, func2, func3, 3)
+    return HiddenMarkovModel(func1, func2, func3, 10)
 
 
 class TestTransitionProbability:
@@ -62,7 +62,7 @@ class TestTransitionProbability:
         b = np.array([2, 0, 1])
         res = transition_probability.eval(a, b)
         assert res.shape == a.shape == b.shape
-        assert np.sum(res) == 1
+        assert np.sum(res) == pytest.approx(3/10)
 
 
 class TestEmissionProbability:
@@ -79,16 +79,16 @@ class TestInitialProbability:
         a = np.array([2, 2, 1])
         res = initial_probability.eval(a)
         assert res.shape == a.shape
-        assert np.sum(res) == 1
+        assert np.sum(res) == pytest.approx(3/10)
 
 
 class TestHiddenMarkovModel:
     def test_object_creation(self, hidden_markov_model, transition_probability):
-        assert hidden_markov_model.M == 3
+        assert hidden_markov_model.M == 10
         assert np.all(hidden_markov_model.P == TRANSITION_MATRIX)
 
     def test_viterbi(self, hidden_markov_model):
-        observations = np.array([1, 2, 0])
-        most_likely_path = np.array([1, 2, 0])
+        observations = np.random.choice(np.arange(10), size=10)
+        most_likely_path = observations
         viterbi_path = hidden_markov_model.viterbi(observations)
         assert np.all(viterbi_path == most_likely_path)

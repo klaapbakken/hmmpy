@@ -1,7 +1,6 @@
-from typing import Callable
+from typing import Callable, Any
 
 import numpy as np
-from numba import jit
 
 
 class HiddenMarkovModel:
@@ -10,7 +9,7 @@ class HiddenMarkovModel:
     def __init__(
         self,
         transition_probability: Callable[[int, int], float],
-        emission_probability: Callable[[float, int], float],
+        emission_probability: Callable[[Any, int], float],
         initial_probability: Callable[[int], float],
         number_of_states: int,
     ):
@@ -33,13 +32,18 @@ class HiddenMarkovModel:
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
 
-    def viterbi(self, z):
-        N = z.shape[0]
+        sumP: np.ndarray = np.sum(self.P, axis=1)
+        self.P: np.ndarray = (self.P.T*1/sumP).T
+        
+
+
+    def viterbi(self, z: list):
+        N = len(z)
         delta = np.zeros((N, self.M))
         phi = np.zeros((N, self.M))
 
         delta[0, :] = self.initial_probability.eval(self.states) * (
-            self.emission_probability.eval(np.repeat(z[0], self.M), self.states)
+            self.emission_probability.eval([z[0]]*self.M, self.states)
         )
 
         phi[0, :] = 0
@@ -47,14 +51,14 @@ class HiddenMarkovModel:
         for n in np.arange(1, N):
             # Multiply delta by each column in P
             # In resulting matrix, for each column, find max entry
-            l = self.emission_probability.eval(np.repeat(z[n], self.M), self.states)
+            l = self.emission_probability.eval([z[n]]*self.M, self.states)
             delta[n, :] = l * np.max((delta[n - 1, :] * self.P.T).T, axis=0)
             phi[n, :] = np.argmax((delta[n - 1, :] * self.P.T).T, axis=0)
 
-        x_star = np.ones((N,))
-        x_star[-1] = np.argmax(delta[-1, :])
+        x_star = np.zeros((N,))
+        x_star[N-1] = np.argmax(delta[N-1, :])
 
-        for n in np.arange(N - 2, 0, -1):
+        for n in np.arange(N - 2, -1, -1):
             x_star[n] = phi[n + 1, x_star[n + 1].astype(int)]
 
         return x_star
@@ -75,13 +79,15 @@ class TransitionProbability:
 class EmissionProbability:
     """Class for representing and evaluating emission probabilties."""
 
-    def __init__(self, emission_probability: Callable[[float, int], float], n: int):
-        self.l: Callable[[float, int], float] = emission_probability
+    def __init__(self, emission_probability: Callable[[Any, int], float], n: int):
+        self.l: Callable[[Any, int], float] = emission_probability
         self.max_index: int = n - 1
 
-    def eval(self, z: np.ndarray, x: np.ndarray):
+    def eval(self, z: list, x: np.ndarray):
         assert np.max(x) <= self.max_index
-        return eval_across_arrays(self.l, z, x)
+        return np.array(
+            [self.l(obs, state) for obs, state in zip(z, x)]
+        )
 
 
 class InitialProbability:
