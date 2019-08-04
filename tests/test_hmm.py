@@ -92,3 +92,8 @@ class TestHiddenMarkovModel:
         most_likely_path = observations
         viterbi_path = hidden_markov_model.viterbi(observations)
         assert np.all(viterbi_path == most_likely_path)
+
+    def test_forward_algorithm(self, hidden_markov_model):
+        observations = np.random.choice(np.arange(10), size=10)
+        probability = hidden_markov_model.forward_algorithm(observations)
+        assert 0 < probability <= 1
