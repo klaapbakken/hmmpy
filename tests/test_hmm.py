@@ -10,7 +10,11 @@ from hmmpy.hmm import (
     HiddenMarkovModel,
 )
 
+np.random.seed(0)
+
+OBSERVATIONS = np.random.choice(np.arange(10), size=10).tolist()
 TRANSITION_MATRIX = np.ones((10, 10)) * 1 / 10
+STATES = np.arange(10).tolist()
 
 
 @pytest.fixture
@@ -19,7 +23,7 @@ def transition_probability():
         P = TRANSITION_MATRIX
         return P[x, y]
 
-    transition_probability = TransitionProbability(func, 10)
+    transition_probability = TransitionProbability(func, STATES)
     return transition_probability
 
 
@@ -28,7 +32,7 @@ def emission_probability():
     def func(z, x):
         return norm.pdf(z, loc=x)
 
-    emission_probability = EmissionProbability(func, 10)
+    emission_probability = EmissionProbability(func, STATES)
     return emission_probability
 
 
@@ -37,7 +41,7 @@ def initial_probability() -> float:
     def func(x):
         return 1 / 10
 
-    initial_probability = InitialProbability(func, 10)
+    initial_probability = InitialProbability(func, STATES)
     return initial_probability
 
 
@@ -53,7 +57,7 @@ def hidden_markov_model():
     def func3(x):
         return 1 / 10
 
-    return HiddenMarkovModel(func1, func2, func3, 10)
+    return HiddenMarkovModel(func1, func2, func3, STATES)
 
 
 class TestTransitionProbability:
@@ -62,7 +66,7 @@ class TestTransitionProbability:
         b = np.array([2, 0, 1])
         res = transition_probability.eval(a, b)
         assert res.shape == a.shape == b.shape
-        assert np.sum(res) == pytest.approx(3/10)
+        assert np.sum(res) == pytest.approx(3 / 10)
 
 
 class TestEmissionProbability:
@@ -79,7 +83,7 @@ class TestInitialProbability:
         a = np.array([2, 2, 1])
         res = initial_probability.eval(a)
         assert res.shape == a.shape
-        assert np.sum(res) == pytest.approx(3/10)
+        assert np.sum(res) == pytest.approx(3 / 10)
 
 
 class TestHiddenMarkovModel:
@@ -88,10 +92,13 @@ class TestHiddenMarkovModel:
         assert np.all(hidden_markov_model.P == TRANSITION_MATRIX)
 
     def test_viterbi(self, hidden_markov_model):
-        observations = np.random.choice(np.arange(10), size=10)
-        most_likely_path = observations
-        viterbi_path = hidden_markov_model.viterbi(observations)
-        assert np.all(viterbi_path == most_likely_path)
+        most_likely_path = OBSERVATIONS
+        viterbi_path = hidden_markov_model.viterbi(OBSERVATIONS)
+        assert np.all(viterbi_path == np.array(most_likely_path))
+
+    def test_most_proable_path(self, hidden_markov_model):
+        most_likely_states = hidden_markov_model.most_likely_path(OBSERVATIONS)
+        assert most_likely_states == list(map(lambda x: x, OBSERVATIONS))
 
     def test_forward_algorithm(self, hidden_markov_model):
         observations = np.random.choice(np.arange(10), size=10)
