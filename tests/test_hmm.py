@@ -104,3 +104,31 @@ class TestHiddenMarkovModel:
         observations = np.random.choice(np.arange(10), size=10)
         probability = hidden_markov_model.forward_algorithm(observations)
         assert 0 < probability <= 1
+
+    def test_backward_algorithm(self, hidden_markov_model):
+        observations = np.random.choice(np.arange(10), size=10)
+        hidden_markov_model.backward_algorithm(observations)
+        random_state = np.random.choice(hidden_markov_model.state_ids)
+        beta = hidden_markov_model.beta
+        assert np.all(np.diff(beta[:, random_state]) >= 0)
+        assert np.all(beta[0, STATES[0]] >= beta[0, :])
+
+    def test_calculate_ksi(self, hidden_markov_model):
+        observations = np.random.choice(np.arange(10), size=10)
+        i = np.random.choice(hidden_markov_model.state_ids)
+        n = np.random.choice(np.arange(len(observations)))
+
+        p = hidden_markov_model.forward_algorithm(observations)
+        hidden_markov_model.backward_algorithm(observations)
+        hidden_markov_model.calculate_ksi(observations)
+
+        gamma = hidden_markov_model.alpha[n, i] * hidden_markov_model.beta[n, i] / p
+        assert np.sum(hidden_markov_model.ksi[n, i, :]) == gamma
+
+    def test_calculate_gamma(self, hidden_markov_model):
+        observations = np.random.choice(np.arange(10), size=10)
+        p = hidden_markov_model.forward_algorithm(observations)
+        hidden_markov_model.backward_algorithm(observations)
+
+        hidden_markov_model.calculate_gamma()
+        assert np.sum(np.sum(hidden_markov_model.gamma, axis=1)) == len(observations)

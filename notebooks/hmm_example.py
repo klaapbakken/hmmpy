@@ -98,15 +98,21 @@ from bokeh.plotting import figure
 # %%
 plot = figure()
 
-np.vstack(true_path)[:, 0]
-
 plot.circle(np.vstack(true_path)[:, 0], np.vstack(true_path)[:, 1], color="blue", size=10);
-
 plot.diamond(np.vstack(most_likely_states)[:, 0], np.vstack(most_likely_states)[:, 1], color="red", size=10);
-
 plot.x(np.vstack(observations)[:, 0], np.vstack(observations)[:, 1], color="green", size=10);
 
 output_notebook()
 show(plot)
 
 # %%
+p = hmm.forward_algorithm(observations)
+
+# %%
+hmm.backward_algorithm(observations)
+
+# %%
+hmm.calculate_ksi(observations)
+
+# %%
+hmm.calculate_gamma()
