@@ -145,23 +145,23 @@ class HiddenMarkovModel:
         sum_over_row = np.sum(numerator, axis=1)
         self.gamma = self.alpha * self.beta / sum_over_row[:, np.newaxis]
 
-    def discrete_reestimation(self, z, z_space):
-        N = len(z)
-        K = len(z_space)
+    # def discrete_reestimation(self, z, z_space):
+    #     N = len(z)
+    #     K = len(z_space)
 
-        pi = self.gamma[0, :]
-        P = np.sum(self.ksi, axis=0)
+    #     pi = self.gamma[0, :]
+    #     P = np.sum(self.ksi, axis=0)
 
-        l = np.zeros((self.M, K))
-        for j in range(self.M):
-            for k, z_element in enumerate(z_space):
-                gamma_sum = 0
-                for n in range(N):
-                    if z[n] == z_element:
-                        gamma_sum += gamma[n, j]
-                l[j, k] = gamma_sum / np.sum(self.gamma[:, j])
+    #     l = np.zeros((self.M, K))
+    #     for j in range(self.M):
+    #         for k, z_element in enumerate(z_space):
+    #             gamma_sum = 0
+    #             for n in range(N):
+    #                 if z[n] == z_element:
+    #                     gamma_sum += self.gamma[n, j]
+    #             l[j, k] = gamma_sum / np.sum(self.gamma[:, j])
 
-        return pi, P, l
+    #     return pi, P, l
 
 
 class TransitionProbability:
