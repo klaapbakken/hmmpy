@@ -89,24 +89,6 @@ class HiddenMarkovModel:
         self.alpha = alpha
         return np.sum(alpha[N - 1, :])
 
-    # def backward_algorithm_slow(self, z: list):
-    #     N = len(z)
-    #     beta = np.zeros((N, self.M))
-    #     beta[N - 1, :] = 1
-
-    #     for n in np.arange(N - 2, -1, -1):
-    #         for i in range(self.M):
-    #             beta[n, i] = np.sum(
-    #             self.transition_probability.eval(
-    #             np.array([i] * self.M), np.arange(self.M)
-    #             )
-    #             * self.emission_probability.eval(
-    #             np.array([z[n + 1]] * self.M), np.arange(self.M)
-    #             )
-    #             * beta[n + 1, i]
-    #             )
-    #         self.beta = beta
-
     def backward_algorithm(self, z: list):
         N = len(z)
         beta = np.zeros((N, self.M))
@@ -144,25 +126,6 @@ class HiddenMarkovModel:
         numerator = self.alpha * self.beta
         sum_over_row = np.sum(numerator, axis=1)
         self.gamma = self.alpha * self.beta / sum_over_row[:, np.newaxis]
-
-    # def discrete_reestimation(self, z, z_space):
-    #     N = len(z)
-    #     K = len(z_space)
-
-    #     pi = self.gamma[0, :]
-    #     P = np.sum(self.ksi, axis=0)
-
-    #     l = np.zeros((self.M, K))
-    #     for j in range(self.M):
-    #         for k, z_element in enumerate(z_space):
-    #             gamma_sum = 0
-    #             for n in range(N):
-    #                 if z[n] == z_element:
-    #                     gamma_sum += self.gamma[n, j]
-    #             l[j, k] = gamma_sum / np.sum(self.gamma[:, j])
-
-    #     return pi, P, l
-
 
 class TransitionProbability:
     """Class for representing and evaluating transition probabilties."""
