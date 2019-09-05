@@ -48,6 +48,8 @@ class HiddenMarkovModel:
         delta[0, :] = self.initial_probability.eval(self.state_ids) * (
             self.emission_probability.eval([z[0]] * self.M, self.state_ids)
         )
+        C = np.sum(delta[0, :])
+        delta[0, :] = delta[0, :] / C
 
         phi[0, :] = 0
 
@@ -58,6 +60,9 @@ class HiddenMarkovModel:
                 [z[n]] * self.M, self.state_ids
             )
             delta[n, :] = l * np.max((delta[n - 1, :] * self.P.T).T, axis=0)
+            C = np.sum(delta[n, :])
+            delta[n, :] = delta[n, :] / C
+
             phi[n, :] = np.argmax((delta[n - 1, :] * self.P.T).T, axis=0)
 
         x_star: np.ndarray = np.zeros((N,))
@@ -81,10 +86,15 @@ class HiddenMarkovModel:
             [z[0]] * self.M, self.state_ids
         ) * self.initial_probability.eval(self.state_ids)
 
+        C = np.sum(alpha[0, :])
+        alpha[0, :] = alpha[0, :] / C
+
         for n in np.arange(N - 1):
             alpha[n + 1, :] = np.sum((alpha[n, :] * self.P.T).T, axis=0) * (
                 self.emission_probability.eval([z[n + 1]] * self.M, self.state_ids)
             )
+            C = np.sum(alpha[n + 1, :])
+            alpha[n + 1, :] / C
 
         self.alpha = alpha
         return np.sum(alpha[N - 1, :])
@@ -126,6 +136,7 @@ class HiddenMarkovModel:
         numerator = self.alpha * self.beta
         sum_over_row = np.sum(numerator, axis=1)
         self.gamma = self.alpha * self.beta / sum_over_row[:, np.newaxis]
+
 
 class TransitionProbability:
     """Class for representing and evaluating transition probabilties."""
