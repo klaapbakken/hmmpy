@@ -1,4 +1,5 @@
 from typing import Callable, Any
+from functools import reduce
 
 import numpy as np
 
@@ -136,6 +137,49 @@ class HiddenMarkovModel:
         numerator = self.alpha * self.beta
         sum_over_row = np.sum(numerator, axis=1)
         self.gamma = self.alpha * self.beta / sum_over_row[:, np.newaxis]
+
+
+class GaussianHiddenMarkovModel(HiddenMarkovModel):
+    def update_initial_probability(self):
+        self.pi = np.sum(self.gamma[0, :])/self.gamma
+
+    def update_transition_probability(self):
+        self.P 
+
+    def update_mixing_coefficients(self):
+        raise NotImplementedError
+
+    def update_mean(self):
+        raise NotImplementedError
+    
+    def update_variance(self):
+        raise NotImplementedError
+
+class GaussianHiddenMarkovModelUpdater():
+    def __init__(self, hmm):
+        self.gammas = list()
+        self.ksis = list()
+        self.zs_list = list()
+        self.hmm = hmm
+
+    def update(self, zs_list):
+        self.zs_list = zs_list
+        for zs in zs_list:
+            self.hmm.backward_algorithm(zs)
+            self.hmm.calculate_ksi(zs)
+            self.hmm.calculate_gamma(zs)
+            self.gammas.append(hmm.gamma)
+            self.ksis.append(hmm.ksis)
+        
+        self.pi = sum(map(lambda x: np.sum(x[0, :])))/len(gammas)
+        mean_numerator = sum(map(lambda x: np.sum(x[0]*x[1], axis=0), zip(self.gammas, self.zs_list)))
+        mean_denominator = sum(map(lambda x: np.sum(x, axis=0), self.gammas))
+        self.mean = numerator/denominator
+        variance_numerator = sum(map(lambda x: np.sum(x[0]*(x[1] - x[2])**2, axis=0), zip(self.gammas, self.zs_list, self.mean)))
+        self.variance = variance_numerator/mean_denominator
+        self.P = sum(np.sum(x, axis=0), self.ksis)/sum(np.sum(x, axis=0), self.gammas)
+
+
 
 
 class TransitionProbability:
