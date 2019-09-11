@@ -1,5 +1,5 @@
 from typing import Callable, Any
-from functools import reduce
+from functools import reduce, partial
 
 import numpy as np
 
@@ -139,23 +139,7 @@ class HiddenMarkovModel:
         self.gamma = self.alpha * self.beta / sum_over_row[:, np.newaxis]
 
 
-class GaussianHiddenMarkovModel(HiddenMarkovModel):
-    def update_initial_probability(self):
-        self.pi = np.sum(self.gamma[0, :])/self.gamma
-
-    def update_transition_probability(self):
-        self.P 
-
-    def update_mixing_coefficients(self):
-        raise NotImplementedError
-
-    def update_mean(self):
-        raise NotImplementedError
-    
-    def update_variance(self):
-        raise NotImplementedError
-
-class GaussianHiddenMarkovModelUpdater():
+class HiddenMarkovModelUpdater():
     def __init__(self, hmm):
         self.gammas = list()
         self.ksis = list()
@@ -167,18 +151,20 @@ class GaussianHiddenMarkovModelUpdater():
         for zs in zs_list:
             self.hmm.backward_algorithm(zs)
             self.hmm.calculate_ksi(zs)
-            self.hmm.calculate_gamma(zs)
-            self.gammas.append(hmm.gamma)
-            self.ksis.append(hmm.ksis)
+            self.hmm.calculate_gamma()
+            self.gammas.append(self.hmm.gamma)
+            self.ksis.append(self.hmm.ksi)
         
-        self.pi = sum(map(lambda x: np.sum(x[0, :])))/len(gammas)
-        mean_numerator = sum(map(lambda x: np.sum(x[0]*x[1], axis=0), zip(self.gammas, self.zs_list)))
-        mean_denominator = sum(map(lambda x: np.sum(x, axis=0), self.gammas))
-        self.mean = numerator/denominator
-        variance_numerator = sum(map(lambda x: np.sum(x[0]*(x[1] - x[2])**2, axis=0), zip(self.gammas, self.zs_list, self.mean)))
-        self.variance = variance_numerator/mean_denominator
-        self.P = sum(np.sum(x, axis=0), self.ksis)/sum(np.sum(x, axis=0), self.gammas)
+        self.pi = sum(map(lambda x: x[0, :], self.gammas))/len(self.zs_list)
+        gamma_sum = sum(map(lambda x: np.sum(x, axis=0), self.gammas))
+        self.P = sum(map(lambda x: np.sum(x, axis=0), self.ksis))/gamma_sum
+        
+        def updated_initial_probability(x):
+            return self.pi[x]
+        
+        self.hmm.P = self.P
 
+        self.hmm.initial_probability = UpdatedInitialProbability(updated_initial_probability)
 
 
 
@@ -238,3 +224,10 @@ class InitialProbability:
     def eval(self, x: np.ndarray):
         assert np.max(x) <= self.max_index
         return np.array(list(map(lambda x: self.pi(self.states[x]), x)))
+
+class UpdatedInitialProbability:
+    def __init__(self, initial_probability):
+        self.pi = initial_probability
+    
+    def eval(self, x: np.ndarray):
+        return np.array(list(map(lambda x: self.pi(x), x)))
