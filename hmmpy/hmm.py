@@ -74,7 +74,7 @@ class HiddenMarkovModel:
 
         return x_star.astype(int)
 
-    def most_likely_path(self, z: list):
+    def decode(self, z: list):
         state_ids = self.viterbi(z)
         return list(map(lambda x: self.states[x], state_ids))
 
@@ -87,18 +87,12 @@ class HiddenMarkovModel:
             [z[0]] * self.M, self.state_ids
         ) * self.initial_probability.eval(self.state_ids)
 
-        C = np.sum(alpha[0, :])
-        alpha[0, :] = alpha[0, :] / C
-
         for n in np.arange(N - 1):
             alpha[n + 1, :] = np.sum((alpha[n, :] * self.P.T).T, axis=0) * (
                 self.emission_probability.eval([z[n + 1]] * self.M, self.state_ids)
             )
-            C = np.sum(alpha[n + 1, :])
-            alpha[n + 1, :] / C
 
         self.alpha = alpha
-        return np.sum(alpha[N - 1, :])
 
     def backward_algorithm(self, z: list):
         N = len(z)
@@ -117,55 +111,24 @@ class HiddenMarkovModel:
 
     def calculate_ksi(self, z: list):
         N = len(z)
-        p = self.forward_algorithm(z)
 
         ksi = np.zeros((N - 1, self.M, self.M))
         for n in range(N - 1):
-            for i in range(self.M):
-                b = self.emission_probability.eval(
-                    np.array([z[n + 1]] * self.M), self.state_ids
-                )
-                for j in range(self.M):
-                    ksi[n, i, j] = (
-                        self.alpha[n, i] * self.P[i, j] * b[j] * self.beta[n + 1, j] / p
-                    )
+            b = self.emission_probability.eval(
+                     np.array([z[n + 1]] * self.M), self.state_ids
+                     )
+            ksi[n, :, :] = ((((self.P*b*self.beta[n + 1, :]).T*self.gamma[n, :]).T).T / self.beta[n, :]).T
+            
+            #Alternative implementation. Does not require that gamma is calculated before.
+            #ksi[n, :, :] = (self.P * b * self.beta[n + 1, :]).T*self.alpha[n, :]
+            #ksi[n, :, :] = ksi[n, :, :]/np.sum(ksi[n, :, :])
 
         self.ksi = ksi
 
     def calculate_gamma(self):
-        self.gamma = np.zeros((self.M, self.M))
-        numerator = self.alpha * self.beta
-        sum_over_row = np.sum(numerator, axis=1)
-        self.gamma = self.alpha * self.beta / sum_over_row[:, np.newaxis]
-
-
-class HiddenMarkovModelUpdater():
-    def __init__(self, hmm):
-        self.gammas = list()
-        self.ksis = list()
-        self.zs_list = list()
-        self.hmm = hmm
-
-    def update(self, zs_list):
-        self.zs_list = zs_list
-        for zs in zs_list:
-            self.hmm.backward_algorithm(zs)
-            self.hmm.calculate_ksi(zs)
-            self.hmm.calculate_gamma()
-            self.gammas.append(self.hmm.gamma)
-            self.ksis.append(self.hmm.ksi)
-        
-        self.pi = sum(map(lambda x: x[0, :], self.gammas))/len(self.zs_list)
-        gamma_sum = sum(map(lambda x: np.sum(x, axis=0), self.gammas))
-        self.P = sum(map(lambda x: np.sum(x, axis=0), self.ksis))/gamma_sum
-        
-        def updated_initial_probability(x):
-            return self.pi[x]
-        
-        self.hmm.P = self.P
-
-        self.hmm.initial_probability = UpdatedInitialProbability(updated_initial_probability)
-
+        alpha_beta_product = self.alpha * self.beta
+        sum_over_all_states = np.sum(alpha_beta_product, axis=1)
+        self.gamma = alpha_beta_product / sum_over_all_states
 
 
 class TransitionProbability:
@@ -181,21 +144,7 @@ class TransitionProbability:
 
     def eval(self, x: np.ndarray, y: np.ndarray):
         assert np.max(x) <= self.max_index and np.max(y) <= self.max_index
-        return self.eval_across_arrays(self.p, x, y)
-
-    def eval_across_arrays(
-        self, func: Callable[[Any, Any], float], arr1: np.ndarray, arr2: np.ndarray
-    ):
-        """Evaluate a 2D scalar function repeatedly on arrays of input."""
-        assert (
-            len(arr1.shape) == len(arr2.shape) == 1
-        ), "Need arrays to be 0-dimensional"
-        assert arr1.shape == arr2.shape, "Need both arrays to be of same length"
-
-        def func_to_apply(slice: np.ndarray):
-            return func(self.states[slice[0]], self.states[slice[1]])
-
-        return np.apply_along_axis(func_to_apply, 0, np.vstack((arr1, arr2)))
+        return np.array(list(map(lambda x: self.p(self.states[x[0]], self.states[x[1]]), zip(x, y))))
 
 
 class EmissionProbability:
@@ -224,10 +173,3 @@ class InitialProbability:
     def eval(self, x: np.ndarray):
         assert np.max(x) <= self.max_index
         return np.array(list(map(lambda x: self.pi(self.states[x]), x)))
-
-class UpdatedInitialProbability:
-    def __init__(self, initial_probability):
-        self.pi = initial_probability
-    
-    def eval(self, x: np.ndarray):
-        return np.array(list(map(lambda x: self.pi(x), x)))

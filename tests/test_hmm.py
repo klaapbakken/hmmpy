@@ -96,13 +96,14 @@ class TestHiddenMarkovModel:
         viterbi_path = hidden_markov_model.viterbi(OBSERVATIONS)
         assert np.all(viterbi_path == np.array(most_likely_path))
 
-    def test_most_proable_path(self, hidden_markov_model):
-        most_likely_states = hidden_markov_model.most_likely_path(OBSERVATIONS)
+    def test_decode(self, hidden_markov_model):
+        most_likely_states = hidden_markov_model.decode(OBSERVATIONS)
         assert most_likely_states == list(map(lambda x: x, OBSERVATIONS))
 
     def test_forward_algorithm(self, hidden_markov_model):
         observations = np.random.choice(np.arange(10), size=10)
-        probability = hidden_markov_model.forward_algorithm(observations)
+        hidden_markov_model.forward_algorithm(observations)
+        probability = np.sum(hidden_markov_model.alpha[-1, :])
         assert 0 < probability <= 1
 
     def test_backward_algorithm(self, hidden_markov_model):
@@ -118,17 +119,17 @@ class TestHiddenMarkovModel:
         i = np.random.choice(hidden_markov_model.state_ids)
         n = np.random.choice(np.arange(len(observations)))
 
-        p = hidden_markov_model.forward_algorithm(observations)
+        hidden_markov_model.forward_algorithm(observations)
         hidden_markov_model.backward_algorithm(observations)
+        hidden_markov_model.calculate_gamma()
         hidden_markov_model.calculate_ksi(observations)
 
-        gamma = hidden_markov_model.alpha[n, i] * hidden_markov_model.beta[n, i] / p
-        assert np.sum(hidden_markov_model.ksi[n, i, :]) == gamma
+        assert np.sum(hidden_markov_model.ksi[n, :, :]) == pytest.approx(np.sum(hidden_markov_model.gamma[n, :]))
 
     def test_calculate_gamma(self, hidden_markov_model):
         observations = np.random.choice(np.arange(10), size=10)
-        p = hidden_markov_model.forward_algorithm(observations)
+        P = hidden_markov_model.forward_algorithm(observations)
         hidden_markov_model.backward_algorithm(observations)
 
         hidden_markov_model.calculate_gamma()
-        assert np.sum(np.sum(hidden_markov_model.gamma, axis=1)) == len(observations)
+        assert np.sum(np.sum(hidden_markov_model.gamma, axis=1)) == pytest.approx(len(observations))
