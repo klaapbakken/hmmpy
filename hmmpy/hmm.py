@@ -3,6 +3,70 @@ from functools import reduce, partial
 
 import numpy as np
 
+from math import exp, sqrt, pi
+
+from itertools import product
+
+class InitialProbability:
+    """Class for representing and evaluating initial probabilties."""
+
+    def __init__(self, initial_probability: Callable[[Any], float], states: list):
+        self.states = states
+        self.n = len(states)
+        self.pi: Callable[[Any], float] = initial_probability
+        self.max_index: int = self.n - 1
+
+    def eval(self, x: np.ndarray):
+        assert np.max(x) <= self.max_index
+        return np.array(list(map(lambda x: self.pi(self.states[x]), x)))
+
+class TransitionProbability:
+    """Class for representing and evaluating transition probabilties."""
+
+    def __init__(
+        self, transition_probability: Callable[[Any, Any], float], states: list
+    ):
+        self.states = states
+        self.n = len(states)
+        self.p: Callable[[Any, Any], float] = transition_probability
+        self.max_index: int = self.n - 1
+
+    def eval(self, x: np.ndarray, y: np.ndarray):
+        assert np.max(x) <= self.max_index and np.max(y) <= self.max_index
+        return np.array(list(map(lambda x: self.p(self.states[x[0]], self.states[x[1]]), zip(x, y))))
+
+class EmissionProbability:
+    """Class for representing and evaluating emission probabilties."""
+
+    def __init__(self, emission_probability: Callable[[Any, Any], float], states: list):
+        self.n = len(states)
+        self.states = states
+        self.l: Callable[[Any, Any], float] = emission_probability
+        self.max_index: int = self.n - 1
+
+    def eval(self, z: list, x: np.ndarray):
+        assert np.max(x) <= self.max_index
+        return np.array([self.l(obs, self.states[state]) for obs, state in zip(z, x)])
+
+class DiscreteEmissionProbability():
+    def __init__(self, emission_probability, states, symbols):
+        K = len(symbols)
+        M = len(states)
+        self.l = emission_probability
+        self.b = np.array(list(map(lambda x: self.l(x[0], x[1]), product(symbols, states)))).reshape(K, M)
+        self.b = self.b / np.sum(self.b, axis=1)[:, np.newaxis]
+
+    def eval(self, z: np.ndarray, x: np.ndarray):
+        return np.array([self.b[x, z] for z, x in zip(z, x)])
+
+class GaussianEmissionProbability():
+    def __init__(self, mus: list, sigmas: list):
+        def emission_probability(z, x):
+            return 1/(sqrt(2*pi)*sigmas[x])*exp((x - mus[x])**2/(2*sigmas[x]**2))
+        self.l = emission_probability
+
+    def eval(self, z: np.ndarray, x: np.ndarray):
+        return np.array([self.l(z, x) for z, x in zip(z, x)])
 
 class HiddenMarkovModel:
     """Class that implements functionality related to Hidden Markov Models."""
@@ -133,56 +197,48 @@ class HiddenMarkovModel:
         sum_over_all_states = np.sum(alpha_beta_product, axis=1)
         self.gamma = alpha_beta_product / sum_over_all_states[:, np.newaxis]
 
-
-class TransitionProbability:
-    """Class for representing and evaluating transition probabilties."""
-
+class DiscreteHiddenMarkovModel(HiddenMarkovModel):
     def __init__(
-        self, transition_probability: Callable[[Any, Any], float], states: list
+        self,
+        transition_probability: Callable[[Any, Any], float],
+        emission_probability: Callable[[Any, int], float],
+        initial_probability: Callable[[int], float],
+        states: list,
+        symbols: list
     ):
         self.states = states
-        self.n = len(states)
-        self.p: Callable[[Any, Any], float] = transition_probability
-        self.max_index: int = self.n - 1
+        self.symbols = symbols
+        self.M: int = len(states)
+        self.state_ids: np.ndarray = np.arange(self.M).astype(int)
+        self.transition_probability: TransitionProbability = TransitionProbability(
+            transition_probability, self.states
+        )
+        self.emission_probability: DiscreteEmissionProbability = DiscreteEmissionProbability(
+            emission_probability, self.states, self.symbols
+        )
+        self.initial_probability: InitialProbability = InitialProbability(
+            initial_probability, self.states
+        )
+        self.alpha = None
+        self.beta = None
+        self.ksi = None
+        self.gamma = None
 
-    def eval(self, x: np.ndarray, y: np.ndarray):
-        assert np.max(x) <= self.max_index and np.max(y) <= self.max_index
-        return np.array(list(map(lambda x: self.p(self.states[x[0]], self.states[x[1]]), zip(x, y))))
+        states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
+        states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
 
+        self.P: np.ndarray = self.transition_probability.eval(
+            states_repeated, states_tiled
+        ).reshape(self.M, self.M)
 
-class EmissionProbability:
-    """Class for representing and evaluating emission probabilties."""
+        sumP: np.ndarray = np.sum(self.P, axis=1)
+        self.P = (self.P.T * 1 / sumP).T
 
-    def __init__(self, emission_probability: Callable[[Any, Any], float], states: list):
-        self.n = len(states)
-        self.states = states
-        self.l: Callable[[Any, Any], float] = emission_probability
-        self.max_index: int = self.n - 1
-
-    def eval(self, z: list, x: np.ndarray):
-        assert np.max(x) <= self.max_index
-        return np.array([self.l(obs, self.states[state]) for obs, state in zip(z, x)])
-
-
-class InitialProbability:
-    """Class for representing and evaluating initial probabilties."""
-
-    def __init__(self, initial_probability: Callable[[Any], float], states: list):
-        self.states = states
-        self.n = len(states)
-        self.pi: Callable[[Any], float] = initial_probability
-        self.max_index: int = self.n - 1
-
-    def eval(self, x: np.ndarray):
-        assert np.max(x) <= self.max_index
-        return np.array(list(map(lambda x: self.pi(self.states[x]), x)))
-
-class DiscreteHiddenMarkovModel(HiddenMarkovModel):
     def learn(self, z, symbols):
         a_u = np.sum(self.ksi, axis=0) 
         a_l = self.gamma[:-1, np.newaxis]
 
-        b_u = np.array(len(z), self.M)
+        b_u = np.ones((len(z), self.M))
         for k, o in enumerate(symbols):
             ts = np.where(np.array(z) == o)
             b_u[k, :] = np.sum(self.gamma[ts, :], axis=0)
@@ -214,11 +270,51 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         self.P = sum(a_us)/sum(a_ls)[:, np.newaxis]
         self.b = sum(b_us)/sum(b_ls)[:, np.newaxis]
         self.pi = sum(pis)/E
+        def emission_probability(x, y):
+            return self.b[x, y]
+        self.emission_probability = DiscreteEmissionProbability(
+            emission_probability, self.symbols, self.states
+            )
 
     def reestimate(self):
         raise NotImplementedError
 
 class GaussianHiddenMarkovModel(HiddenMarkovModel):
+    def __init__(
+        self,
+        transition_probability: Callable[[Any, Any], float],
+        initial_probability: Callable[[int], float],
+        states: list,
+        mus: list,
+        sigmas: list
+    ):
+        self.states = states
+        self.M: int = len(states)
+        self.state_ids: np.ndarray = np.arange(self.M).astype(int)
+        self.transition_probability: TransitionProbability = TransitionProbability(
+            transition_probability, self.states
+        )
+        self.emission_probability: GaussianEmissionProbability = GaussianEmissionProbability(
+            mus, sigmas
+        )
+        self.initial_probability: InitialProbability = InitialProbability(
+            initial_probability, self.states
+        )
+        self.alpha = None
+        self.beta = None
+        self.ksi = None
+        self.gamma = None
+
+        states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
+        states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
+
+        self.P: np.ndarray = self.transition_probability.eval(
+            states_repeated, states_tiled
+        ).reshape(self.M, self.M)
+
+        sumP: np.ndarray = np.sum(self.P, axis=1)
+        self.P = (self.P.T * 1 / sumP).T
+
     def learn(self, z, mu, gamma, ksi):
         a_u = np.sum(self.ksi, axis=0) 
         a_l = self.gamma[:-1, np.newaxis]
@@ -275,8 +371,10 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         self.P = sum(a_us)/sum(a_ls)[:, np.newaxis]
         self.sigma = sum(sigma_us)/sum(sigma_ls)[:, np.newaxis]
         self.pi = sum(pis)/E
+        self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
 
-    def reestimate(self):
-        raise NotImplementedError
+    def reestimate(self, zs: list, iterations=10):
+        for _ in range(iterations):
+            self.learn_from_sequence(zs)
         
 
