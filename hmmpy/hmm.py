@@ -93,6 +93,8 @@ class HiddenMarkovModel:
             )
 
         self.alpha = alpha
+        self.c = np.sum(alpha, axis=1)
+        self.alpha_scaled = self.alpha / self.c[:, np.newaxis]
 
     def backward_algorithm(self, z: list):
         N = len(z)
@@ -108,6 +110,7 @@ class HiddenMarkovModel:
             beta[n, :] = np.sum(kernel * beta[n + 1, :], axis=1)
 
         self.beta = beta
+        self.beta_scaled = self.beta / self.c[:, np.newaxis]
 
     def calculate_ksi(self, z: list):
         N = len(z)
@@ -117,7 +120,7 @@ class HiddenMarkovModel:
             b = self.emission_probability.eval(
                      np.array([z[n + 1]] * self.M), self.state_ids
                      )
-            ksi[n, :, :] = ((((self.P*b*self.beta[n + 1, :]).T*self.gamma[n, :]).T).T / self.beta[n, :]).T
+            ksi[n, :, :] = ((((self.P*b*self.beta_scaled[n + 1, :]).T*self.gamma[n, :]).T).T / self.beta_scaled[n, :]).T
             
             #Alternative implementation. Does not require that gamma is calculated before.
             #ksi[n, :, :] = (self.P * b * self.beta[n + 1, :]).T*self.alpha[n, :]
@@ -126,9 +129,9 @@ class HiddenMarkovModel:
         self.ksi = ksi
 
     def calculate_gamma(self):
-        alpha_beta_product = self.alpha * self.beta
+        alpha_beta_product = self.alpha_scaled * self.beta_scaled
         sum_over_all_states = np.sum(alpha_beta_product, axis=1)
-        self.gamma = alpha_beta_product / sum_over_all_states
+        self.gamma = alpha_beta_product / sum_over_all_states[:, np.newaxis]
 
 
 class TransitionProbability:
@@ -173,3 +176,107 @@ class InitialProbability:
     def eval(self, x: np.ndarray):
         assert np.max(x) <= self.max_index
         return np.array(list(map(lambda x: self.pi(self.states[x]), x)))
+
+class DiscreteHiddenMarkovModel(HiddenMarkovModel):
+    def learn(self, z, symbols):
+        a_u = np.sum(self.ksi, axis=0) 
+        a_l = self.gamma[:-1, np.newaxis]
+
+        b_u = np.array(len(z), self.M)
+        for k, o in enumerate(symbols):
+            ts = np.where(np.array(z) == o)
+            b_u[k, :] = np.sum(self.gamma[ts, :], axis=0)
+        b_l = np.sum(self.gamma, axis=0)
+
+        pi = self.gamma[0, :]
+
+        return a_u, a_l, b_u, b_l, pi
+
+    def learn_from_sequence(self, zs, symbols):
+        E = len(zs)
+        a_us = []
+        a_ls = []
+        b_us = []
+        b_ls = []
+        pis = []
+        for z in zs:
+            self.forward_algorithm(z)
+            self.backward_algorithm(z)
+            self.calculate_gamma()
+            self.calculate_ksi(z)
+            a_u, a_l, b_u, b_l, pi = self.learn(z, symbols)
+            a_us.append(a_u)
+            a_ls.append(a_l)
+            b_us.append(b_u)
+            b_ls.append(b_l)
+            pis.append(pi)
+        
+        self.P = sum(a_us)/sum(a_ls)[:, np.newaxis]
+        self.b = sum(b_us)/sum(b_ls)[:, np.newaxis]
+        self.pi = sum(pis)/E
+
+    def reestimate(self):
+        raise NotImplementedError
+
+class GaussianHiddenMarkovModel(HiddenMarkovModel):
+    def learn(self, z, mu, gamma, ksi):
+        a_u = np.sum(self.ksi, axis=0) 
+        a_l = self.gamma[:-1, np.newaxis]
+
+        sigma_u = np.sum(gamma, axis=0)*((z - mu)*(z - mu).T)
+        sigma_l = np.sum(self.gamma, axis=0)
+
+        pi = self.gamma[0, :]
+
+        return a_u, a_l, sigma_u, sigma_l, pi
+    
+    def learn_mu(self, z):
+        mu_u = np.sum(self.gamma*np.array(z)[:, np.newaxis], axis=0)
+        mu_l = np.sum(self.gamma, axis=0)
+
+        return mu_u, mu_l
+
+    def learn_from_sequence(self, zs):
+        E = len(zs)
+        mu_us = []
+        mu_ls = []
+
+        gammas = []
+        ksis = []
+
+        for z in zs:
+            self.forward_algorithm(z)
+            self.backward_algorithm(z)
+            self.calculate_gamma()
+            self.calculate_ksi(z)
+
+            gammas.append(self.gamma)
+            ksis.append(self.ksi)
+
+            mu_u, mu_l = self.learn_mu(z)
+            mu_us.append(mu_u)
+            mu_ls.append(mu_l)
+
+        self.mu = sum(mu_us)/sum(mu_ls)[:, np.newaxis]
+
+        a_us = []
+        a_ls = []
+        sigma_us = []
+        sigma_ls = []
+        pis = []
+        for z, gamma, ksi in zip(zs, gammas, ksis):
+            a_u, a_l, sigma_u, sigma_l, pi = self.learn(z, self.mu, gamma, ksi)
+            a_us.append(a_u)
+            a_ls.append(a_l)
+            sigma_us.append(sigma_u)
+            sigma_ls.append(sigma_l)
+            pis.append(pi)
+        
+        self.P = sum(a_us)/sum(a_ls)[:, np.newaxis]
+        self.sigma = sum(sigma_us)/sum(sigma_ls)[:, np.newaxis]
+        self.pi = sum(pis)/E
+
+    def reestimate(self):
+        raise NotImplementedError
+        
+
