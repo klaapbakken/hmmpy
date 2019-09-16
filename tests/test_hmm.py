@@ -108,6 +108,7 @@ class TestHiddenMarkovModel:
 
     def test_backward_algorithm(self, hidden_markov_model):
         observations = np.random.choice(np.arange(10), size=10)
+        hidden_markov_model.forward_algorithm(observations)
         hidden_markov_model.backward_algorithm(observations)
         random_state = np.random.choice(hidden_markov_model.state_ids)
         beta = hidden_markov_model.beta
@@ -124,7 +125,7 @@ class TestHiddenMarkovModel:
         hidden_markov_model.calculate_gamma()
         hidden_markov_model.calculate_ksi(observations)
 
-        assert np.sum(hidden_markov_model.ksi[n, :, :]) == pytest.approx(np.sum(hidden_markov_model.gamma[n, :]))
+        assert np.sum(hidden_markov_model.ksi[n, i, :]) == pytest.approx(hidden_markov_model.gamma[n, i])
 
     def test_calculate_gamma(self, hidden_markov_model):
         observations = np.random.choice(np.arange(10), size=10)

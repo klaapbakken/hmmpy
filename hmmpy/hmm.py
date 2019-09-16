@@ -2,6 +2,7 @@ from typing import Callable, Any
 from functools import reduce, partial
 
 import numpy as np
+from numpy import ma
 
 from math import exp, sqrt, pi
 
@@ -50,14 +51,15 @@ class EmissionProbability:
 
 class DiscreteEmissionProbability():
     def __init__(self, emission_probability, states, symbols):
-        K = len(symbols)
-        M = len(states)
+        self.symbol_id_dictionary = {k : v for k, v in zip(symbols, range(len(symbols)))}
+        self.K = len(symbols)
+        self.M = len(states)
         self.l = emission_probability
-        self.b = np.array(list(map(lambda x: self.l(x[0], x[1]), product(symbols, states)))).reshape(K, M)
-        self.b = self.b / np.sum(self.b, axis=1)[:, np.newaxis]
+        self.b = np.array(list(map(lambda x: self.l(x[0], x[1]), product(symbols, states)))).reshape(self.K, self.M)
+        self.b = self.b / np.sum(self.b, axis=0)
 
-    def eval(self, z: np.ndarray, x: np.ndarray):
-        return np.array([self.b[x, z] for z, x in zip(z, x)])
+    def eval(self, z: list, x: np.ndarray):
+        return np.array([self.b[self.symbol_id_dictionary[a], b] for a, b in zip(z, x)])
 
 class GaussianEmissionProbability():
     def __init__(self, mus: list, sigmas: list):
@@ -66,6 +68,7 @@ class GaussianEmissionProbability():
         self.l = emission_probability
 
     def eval(self, z: np.ndarray, x: np.ndarray):
+        #Can do apply along axis.
         return np.array([self.l(z, x) for z, x in zip(z, x)])
 
 class HiddenMarkovModel:
@@ -105,7 +108,7 @@ class HiddenMarkovModel:
         sumP: np.ndarray = np.sum(self.P, axis=1)
         self.P = (self.P.T * 1 / sumP).T
 
-    def viterbi(self, z: list):
+    def naive_viterbi(self, z: list):
         N: int = len(z)
         delta: np.ndarray = np.zeros((N, self.M))
         phi: np.ndarray = np.zeros((N, self.M))
@@ -113,8 +116,6 @@ class HiddenMarkovModel:
         delta[0, :] = self.initial_probability.eval(self.state_ids) * (
             self.emission_probability.eval([z[0]] * self.M, self.state_ids)
         )
-        C = np.sum(delta[0, :])
-        delta[0, :] = delta[0, :] / C
 
         phi[0, :] = 0
 
@@ -125,8 +126,6 @@ class HiddenMarkovModel:
                 [z[n]] * self.M, self.state_ids
             )
             delta[n, :] = l * np.max((delta[n - 1, :] * self.P.T).T, axis=0)
-            C = np.sum(delta[n, :])
-            delta[n, :] = delta[n, :] / C
 
             phi[n, :] = np.argmax((delta[n - 1, :] * self.P.T).T, axis=0)
 
@@ -137,6 +136,33 @@ class HiddenMarkovModel:
             x_star[n] = phi[n + 1, x_star[n + 1].astype(int)]
 
         return x_star.astype(int)
+    
+    def viterbi(self, z: list):
+        N: int = len(z)
+        delta: np.ndarray = np.zeros((N, self.M))
+        phi: np.ndarray = np.zeros((N, self.M))
+        log_P = ma.log(self.P).filled(-np.inf)
+        
+
+        delta[0, :] = np.log(self.initial_probability.eval(self.state_ids)) + np.log(self.emission_probability.eval([z[0]] * self.M, self.state_ids))
+        phi[0, :] = 0
+
+        for n in np.arange(1, N):
+            # Multiply delta by each column in P
+            # In resulting matrix, for each column, find max entry
+            log_l: np.ndarray = np.log(self.emission_probability.eval(
+                [z[n]] * self.M, self.state_ids
+            ))
+            delta[n, :] = log_l + np.max((np.expand_dims(delta[n - 1, :], axis=1) + log_P), axis=0)
+            phi[n, :] = np.argmax((np.expand_dims(delta[n - 1, :], axis=1) + log_P), axis=0)
+
+        q_star = np.zeros((N, ))
+        q_star[N - 1] = np.argmax(delta[N - 1, :])
+
+        for n in np.arange(N - 2, -1, -1):
+            q_star[n] = phi[n + 1, q_star[n + 1].astype(int)]
+
+        return q_star.astype(int)
 
     def decode(self, z: list):
         state_ids = self.viterbi(z)
@@ -146,19 +172,23 @@ class HiddenMarkovModel:
         N: int = len(z)
 
         alpha = np.zeros((N, self.M))
+        c = np.zeros((N,))
 
         alpha[0, :] = self.emission_probability.eval(
             [z[0]] * self.M, self.state_ids
         ) * self.initial_probability.eval(self.state_ids)
+        c[0] = np.reciprocal(np.sum(alpha[0, :]))
+        alpha[0, :] = alpha[0, :]*c[0]
 
         for n in np.arange(N - 1):
-            alpha[n + 1, :] = np.sum((alpha[n, :] * self.P.T).T, axis=0) * (
+            alpha[n + 1, :] = np.sum(alpha[n, :] * self.P, axis=1) * (
                 self.emission_probability.eval([z[n + 1]] * self.M, self.state_ids)
             )
+            c[n+1] = np.reciprocal(np.sum(alpha[n+1, :]))
+            alpha[n + 1, :] = alpha[n + 1, :] * c[n+1]
 
+        self.c = c
         self.alpha = alpha
-        self.c = np.sum(alpha, axis=1)
-        self.alpha_scaled = self.alpha / self.c[:, np.newaxis]
 
     def backward_algorithm(self, z: list):
         N = len(z)
@@ -169,12 +199,10 @@ class HiddenMarkovModel:
             b = self.emission_probability.eval(
                 np.array([z[n + 1]] * self.M), np.arange(self.M)
             )
-            kernel = self.P * b
 
-            beta[n, :] = np.sum(kernel * beta[n + 1, :], axis=1)
+            beta[n, :] = np.sum(self.P * b * beta[n + 1, :], axis=1)
 
-        self.beta = beta
-        self.beta_scaled = self.beta / self.c[:, np.newaxis]
+        self.beta = beta * self.c[:, np.newaxis]
 
     def calculate_ksi(self, z: list):
         N = len(z)
@@ -184,18 +212,21 @@ class HiddenMarkovModel:
             b = self.emission_probability.eval(
                      np.array([z[n + 1]] * self.M), self.state_ids
                      )
-            ksi[n, :, :] = ((((self.P*b*self.beta_scaled[n + 1, :]).T*self.gamma[n, :]).T).T / self.beta_scaled[n, :]).T
-            
-            #Alternative implementation. Does not require that gamma is calculated before.
-            #ksi[n, :, :] = (self.P * b * self.beta[n + 1, :]).T*self.alpha[n, :]
-            #ksi[n, :, :] = ksi[n, :, :]/np.sum(ksi[n, :, :])
+            ksi[n, :, :] = (self.P * b * self.beta[n + 1, :]) * self.alpha[n, :][:, np.newaxis]
+            ksi[n, :, :] = ksi[n, :, :]/np.sum(ksi[n, :, :])
 
         self.ksi = ksi
 
     def calculate_gamma(self):
-        alpha_beta_product = self.alpha_scaled * self.beta_scaled
+        alpha_beta_product = self.alpha * self.beta
         sum_over_all_states = np.sum(alpha_beta_product, axis=1)
         self.gamma = alpha_beta_product / sum_over_all_states[:, np.newaxis]
+
+    def observation_log_probability(self, z):
+        self.forward_algorithm(z)
+        return -np.sum(self.c)
+
+
 
 class DiscreteHiddenMarkovModel(HiddenMarkovModel):
     def __init__(
@@ -235,13 +266,16 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         self.P = (self.P.T * 1 / sumP).T
 
     def learn(self, z, symbols):
+        K = len(symbols)
         a_u = np.sum(self.ksi, axis=0) 
-        a_l = self.gamma[:-1, np.newaxis]
+        a_l = np.sum(self.gamma, axis=0)
 
-        b_u = np.ones((len(z), self.M))
+        b_u = np.ones((K, self.M))
         for k, o in enumerate(symbols):
             ts = np.where(np.array(z) == o)
-            b_u[k, :] = np.sum(self.gamma[ts, :], axis=0)
+            partial_gamma = np.zeros(self.gamma.shape)
+            partial_gamma[ts, :] = self.gamma[ts, :]
+            b_u[k, :] = np.sum(partial_gamma, axis=0)
         b_l = np.sum(self.gamma, axis=0)
 
         pi = self.gamma[0, :]
@@ -267,17 +301,20 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
             b_ls.append(b_l)
             pis.append(pi)
         
-        self.P = sum(a_us)/sum(a_ls)[:, np.newaxis]
+        self.P = sum(a_us)/sum(a_ls)
+        print(self.P.shape)
         self.b = sum(b_us)/sum(b_ls)[:, np.newaxis]
+        print(self.b.shape)
         self.pi = sum(pis)/E
-        def emission_probability(x, y):
-            return self.b[x, y]
-        self.emission_probability = DiscreteEmissionProbability(
-            emission_probability, self.symbols, self.states
-            )
+        print(self.pi.shape)
+        return
 
-    def reestimate(self):
-        raise NotImplementedError
+        assert self.b.shape == (self.emission_probability.K, self.emission_probability.M)
+        self.emission_probability.b = self.b
+
+    def reestimate(self, zs: list, iterations=10):
+        for _ in range(iterations):
+            self.learn_from_sequence(zs)
 
 class GaussianHiddenMarkovModel(HiddenMarkovModel):
     def __init__(
