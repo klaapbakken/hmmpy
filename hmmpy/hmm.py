@@ -4,6 +4,8 @@ from functools import reduce, partial
 import numpy as np
 from numpy import ma
 
+from scipy.stats import norm
+
 from math import exp, sqrt, pi
 
 from itertools import product
@@ -62,9 +64,12 @@ class DiscreteEmissionProbability():
         return np.array([self.b[self.symbol_id_dictionary[a], b] for a, b in zip(z, x)])
 
 class GaussianEmissionProbability():
+    #Need to support multivariate. Move to SciPy.
     def __init__(self, mus: list, sigmas: list):
+        self.mus = mus
+        self.sigmas = sigmas
         def emission_probability(z, x):
-            return 1/(sqrt(2*pi)*sigmas[x])*exp((x - mus[x])**2/(2*sigmas[x]**2))
+            return norm.pdf(z, loc=self.mus[x], scale=self.sigmas[x])
         self.l = emission_probability
 
     def eval(self, z: np.ndarray, x: np.ndarray):
@@ -200,9 +205,9 @@ class HiddenMarkovModel:
                 np.array([z[n + 1]] * self.M), np.arange(self.M)
             )
 
-            beta[n, :] = np.sum(self.P * b * beta[n + 1, :], axis=1)
+            beta[n, :] = np.sum(self.P * b * beta[n + 1, :], axis=1)*self.c[n]
 
-        self.beta = beta * self.c[:, np.newaxis]
+        self.beta = beta
 
     def calculate_ksi(self, z: list):
         N = len(z)
@@ -301,12 +306,9 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
             b_ls.append(b_l)
             pis.append(pi)
         
-        self.P = sum(a_us)/sum(a_ls)
-        print(self.P.shape)
+        self.P = sum(a_us)/sum(a_ls)[:, np.newaxis]
         self.b = sum(b_us)/sum(b_ls)[:, np.newaxis]
-        print(self.b.shape)
         self.pi = sum(pis)/E
-        print(self.pi.shape)
         return
 
         assert self.b.shape == (self.emission_probability.K, self.emission_probability.M)
@@ -352,28 +354,42 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         sumP: np.ndarray = np.sum(self.P, axis=1)
         self.P = (self.P.T * 1 / sumP).T
 
-    def learn(self, z, mu, gamma, ksi):
-        a_u = np.sum(self.ksi, axis=0) 
-        a_l = self.gamma[:-1, np.newaxis]
+    def learn(self, z, mus, gamma, ksi):
+        z_arr = np.array(z).reshape(gamma.shape[0], -1)
+        assert z_arr.shape == (self.gamma.shape[0], mus.shape[1])
+        a_u = np.sum(ksi, axis=0) 
+        a_l = np.sum(gamma, axis=0)
 
-        sigma_u = np.sum(gamma, axis=0)*((z - mu)*(z - mu).T)
-        sigma_l = np.sum(self.gamma, axis=0)
+
+        def matmul_self(arr):
+            rarr = arr.reshape(arr.shape[0], -1)
+            return np.matmul(rarr, rarr.T)
+   
+        arr = z_arr - mus[:, np.newaxis]
+        t_arrs = []
+        for t in range(arr.shape[0]):
+            prods = np.apply_along_axis(matmul_self, 1, arr[t, :, :].T)
+            t_arrs.append(gamma[t, :].reshape(self.M, -1)[:, np.newaxis]*prods)
+        
+        sigma_u = np.sum(np.array(t_arrs), axis=0)
+        sigma_l = np.sum(gamma, axis=0)
 
         pi = self.gamma[0, :]
 
         return a_u, a_l, sigma_u, sigma_l, pi
     
-    def learn_mu(self, z):
-        mu_u = np.sum(self.gamma*np.array(z)[:, np.newaxis], axis=0)
-        mu_l = np.sum(self.gamma, axis=0)
+    def learn_mus(self, z):
+        z_arr = np.array(z)
+        mus_u = np.sum(self.gamma*z_arr[:, np.newaxis], axis=0)
+        mus_l = np.sum(self.gamma, axis=0)
 
-        return mu_u, mu_l
+        return mus_u, mus_l
 
     def learn_from_sequence(self, zs):
         E = len(zs)
-        mu_us = []
-        mu_ls = []
 
+        mus_us = []
+        mus_ls = []
         gammas = []
         ksis = []
 
@@ -386,11 +402,11 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             gammas.append(self.gamma)
             ksis.append(self.ksi)
 
-            mu_u, mu_l = self.learn_mu(z)
-            mu_us.append(mu_u)
-            mu_ls.append(mu_l)
+            mus_u, mus_l = self.learn_mus(z)
+            mus_us.append(mus_u)
+            mus_ls.append(mus_l)
 
-        self.mu = sum(mu_us)/sum(mu_ls)[:, np.newaxis]
+        self.mus = (sum(mus_us)/sum(mus_ls)).reshape(self.M, -1)
 
         a_us = []
         a_ls = []
@@ -398,7 +414,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         sigma_ls = []
         pis = []
         for z, gamma, ksi in zip(zs, gammas, ksis):
-            a_u, a_l, sigma_u, sigma_l, pi = self.learn(z, self.mu, gamma, ksi)
+            a_u, a_l, sigma_u, sigma_l, pi = self.learn(z, self.mus, gamma, ksi)
             a_us.append(a_u)
             a_ls.append(a_l)
             sigma_us.append(sigma_u)
@@ -406,9 +422,9 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             pis.append(pi)
         
         self.P = sum(a_us)/sum(a_ls)[:, np.newaxis]
-        self.sigma = sum(sigma_us)/sum(sigma_ls)[:, np.newaxis]
+        self.sigmas = sum(sigma_us)/sum(sigma_ls)[:, np.newaxis, np.newaxis]
         self.pi = sum(pis)/E
-        self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
+        self.emission_probability = GaussianEmissionProbability(self.mus, self.sigmas)
 
     def reestimate(self, zs: list, iterations=10):
         for _ in range(iterations):
