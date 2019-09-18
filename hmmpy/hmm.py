@@ -4,7 +4,7 @@ from functools import reduce, partial
 import numpy as np
 from numpy import ma
 
-from scipy.stats import norm
+from scipy.stats import multivariate_normal
 
 from math import exp, sqrt, pi
 
@@ -337,7 +337,7 @@ class GaussianEmissionProbability:
         self.sigmas = sigmas
 
         def emission_probability(z, x):
-            return norm.pdf(z, loc=self.mus[x], scale=self.sigmas[x])
+            return multivariate_normal.pdf(z, mean=self.mus[x, :], cov=self.sigmas[x, :, :])
 
         self.l = emission_probability
 
