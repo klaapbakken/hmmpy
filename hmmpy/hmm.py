@@ -56,6 +56,7 @@ class EmissionProbability:
         assert np.max(x) <= self.max_index
         return np.array([self.l(obs, self.states[state]) for obs, state in zip(z, x)])
 
+
 class HiddenMarkovModel:
     """Class that implements functionality related to Hidden Markov Models."""
 
@@ -128,17 +129,21 @@ class HiddenMarkovModel:
         phi: np.ndarray = np.zeros((N, self.M))
         log_P = ma.log(self.P).filled(-np.inf)
 
-        delta[0, :] = np.log(self.initial_probability.eval(self.state_ids)) + np.log(
+        delta[0, :] = ma.log(self.initial_probability.eval(self.state_ids)).filled(
+            -np.inf
+        ) + ma.log(
             self.emission_probability.eval([z[0]] * self.M, self.state_ids)
+        ).filled(
+            -np.inf
         )
         phi[0, :] = 0
 
         for n in np.arange(1, N):
             # Multiply delta by each column in P
             # In resulting matrix, for each column, find max entry
-            log_l: np.ndarray = np.log(
+            log_l: np.ndarray = ma.log(
                 self.emission_probability.eval([z[n]] * self.M, self.state_ids)
-            )
+            ).filled(-np.inf)
             delta[n, :] = log_l + np.max(
                 (np.expand_dims(delta[n - 1, :], axis=1) + log_P), axis=0
             )
@@ -218,6 +223,7 @@ class HiddenMarkovModel:
         self.forward_algorithm(z)
         return -np.sum(self.c)
 
+
 class DiscreteEmissionProbability:
     """Class for representing probabilities for discrete observations."""
 
@@ -233,6 +239,7 @@ class DiscreteEmissionProbability:
 
     def eval(self, z: list, x: np.ndarray):
         return np.array([self.b[self.symbol_id_dictionary[a], b] for a, b in zip(z, x)])
+
 
 class DiscreteHiddenMarkovModel(HiddenMarkovModel):
     def __init__(
@@ -339,7 +346,6 @@ class GaussianEmissionProbability:
         return np.array([self.l(z, x) for z, x in zip(z, x)])
 
 
-
 class GaussianHiddenMarkovModel(HiddenMarkovModel):
     def __init__(
         self,
@@ -435,7 +441,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         self.sigmas = sum(sigma_us) / sum(sigma_ls)[:, np.newaxis, np.newaxis]
         self.pi = sum(pis) / E
         self.emission_probability = GaussianEmissionProbability(self.mus, self.sigmas)
-    
+
     def compute_sigma_u(self, z, mus, gamma):
         T = z.shape[0]
         D = z.shape[1]
@@ -445,9 +451,9 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             comps = []
             for t in range(T):
                 arr = (z[t, :] - mus[m, :]).reshape(D, 1)
-                comps.append(gamma[t, m]*np.matmul(arr, arr.T))
-            comps = np.array(comps) 
-            assert comps.shape == (T, D, D) 
+                comps.append(gamma[t, m] * np.matmul(arr, arr.T))
+            comps = np.array(comps)
+            assert comps.shape == (T, D, D)
             sum_over_t = np.sum(comps, axis=0)
             assert sum_over_t.shape == (D, D)
             sigmas.append(sum_over_t)
