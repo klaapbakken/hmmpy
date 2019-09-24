@@ -119,6 +119,8 @@ class HiddenMarkovModel:
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
 
+
+        #Implement setter for P at some stage, please
         self.P: np.ndarray = self.transition_probability.eval(
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
@@ -331,7 +333,7 @@ class DiscreteEmissionProbability:
         self._b = np.array(
             list(map(lambda x: self.l(x[0], x[1]), product(symbols, states)))
         ).reshape(self.K, self.M)
-        self._b = self._b / np.sum(self.b, axis=0)
+        self._b = self._b / np.sum(self._b, axis=0)
 
     @property
     def b(self):
@@ -339,7 +341,12 @@ class DiscreteEmissionProbability:
     
     @b.setter
     def b(self, value):
-        self._b = value
+        #Should not be set with unscaled array, safer option would be assert almost equal
+        unscaled_b = value
+        scaled_b = value / np.sum(unscaled_b, axis=0)
+        if not np.all(np.isclose(unscaled_b, scaled_b, atol=1e-3)):
+            raise Warning("Unscaled transition matrix supplied to setter.")
+        self._b = scaled_b
 
     def eval(self, z: list, x: np.ndarray):
         """Return an array where the ith element is the probability of observing the symbol in
@@ -407,14 +414,14 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
             P_lowers.append(P_lower*revised_scalings[i])
 
             l_upper, l_lower = self.calculate_inner_emission_probability_sums(z, self.gamma, self.symbols)
-            l_uppers.append(l_upper)
-            l_lowers.append(l_lower)
+            l_uppers.append(l_upper*revised_scalings[i])
+            l_lowers.append(l_lower*revised_scalings[i])
 
             pi = self.gamma[0, :]
             pis.append(pi)
         
         self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
-        self.b = sum(l_uppers) / sum(l_lowers)[:, np.newaxis]
+        self.b = sum(l_uppers) / sum(l_lowers)
         self.pi = sum(pis) / E
 
         self.emission_probability.b = self.b
@@ -448,12 +455,12 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
 class GaussianEmissionProbability:
     """Class for representing state-dependent Gaussian emission probabilties."""
 
-    def __init__(self, mus: list, sigmas: list):
-        self.mus = mus
-        self.sigmas = sigmas
+    def __init__(self, mu: list, sigma: list):
+        self.mu = mu
+        self.sigma = sigma
 
         def emission_probability(z, x):
-            return multivariate_normal.pdf(z, mean=self.mus[x, :], cov=self.sigmas[x, :, :])
+            return multivariate_normal.pdf(z, mean=self.mu[x, :], cov=self.sigma[x, :, :])
         self.l = emission_probability
 
     def eval(self, z: np.ndarray, x: np.ndarray):
@@ -509,31 +516,28 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         E = len(zs)
 
         gammas = ksis = []
-        for i, z in enumerate(zs):
+        for scaling, z in zip(revised_scalings, zs):
             self.forward_backward_algorithm(z)
-            gammas.append(self.gamma)
-            ksis.append(self.ksi)
+            gamma = self.gamma
+            ksi = self.ksi
 
-        for gamma, z in zip(gammas, zs):
-            mu_upper, mu_lower = self.calculate_mu(z, gamma)
-            mu_uppers.append(mu_upper)
-            mu_lowers.append(mu_lower)
-
-        self.mu = (sum(mu_uppers) / sum(mu_lowers)).reshape(self.M, -1)
-
-        for scaling, gamma, ksi, z in zip(revised_scalings, gammas, ksis, zs):
             P_upper, P_lower = DiscreteHiddenMarkovModel.calculate_inner_transition_probability_sums(ksi, gamma)
             P_uppers.append(P_upper*scaling)
             P_lowers.append(P_lower*scaling)
 
-            sigma_upper, sigma_lower = self.compute_sigma(z, self.mu, gamma)
+            mu_upper, mu_lower = self.calculate_mu(z, gamma)
+            mu_uppers.append(mu_upper)
+            mu_lowers.append(mu_lower)
+
+            sigma_upper, sigma_lower = self.compute_sigma(z, self.emission_probability.mu, gamma)
             sigma_uppers.append(sigma_upper)
             sigma_lowers.append(sigma_lower)
 
-            pi = self.gamma[0, :]
+            pi = gamma[0, :]
             pis.append(pi)
         
         self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
+        self.mu = (sum(mu_uppers) / sum(mu_lowers)).reshape(self.M, -1)
         self.sigma = sum(sigma_uppers) / sum(sigma_lowers)[:, np.newaxis, np.newaxis]
         self.pi = sum(pis) / E
         self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
