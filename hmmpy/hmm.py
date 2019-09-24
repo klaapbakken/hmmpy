@@ -454,7 +454,6 @@ class GaussianEmissionProbability:
 
         def emission_probability(z, x):
             return multivariate_normal.pdf(z, mean=self.mus[x, :], cov=self.sigmas[x, :, :])
-
         self.l = emission_probability
 
     def eval(self, z: np.ndarray, x: np.ndarray):
@@ -468,8 +467,8 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         transition_probability: Callable[[Any, Any], float],
         initial_probability: Callable[[int], float],
         states: list,
-        mus: list,
-        sigmas: list,
+        mu: list,
+        sigma: list,
     ):
         self.states = states
         self.M: int = len(states)
@@ -478,15 +477,11 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             transition_probability, self.states
         )
         self.emission_probability: GaussianEmissionProbability = GaussianEmissionProbability(
-            mus, sigmas
+            mu, sigma
         )
         self.initial_probability: InitialProbability = InitialProbability(
             initial_probability, self.states
         )
-        self.alpha = None
-        self.beta = None
-        self.ksi = None
-        self.gamma = None
 
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
@@ -498,84 +493,78 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         sumP: np.ndarray = np.sum(self.P, axis=1)
         self.P = (self.P.T * 1 / sumP).T
 
-    def learn(self, gamma, ksi):
-        a_u = np.sum(ksi, axis=0)
-        a_l = np.sum(gamma, axis=0)
+    def baum_welch(self, zs: list):
+        P_uppers = []
+        P_lowers = []
+        mu_uppers = []
+        mu_lowers = []
+        sigma_uppers = []
+        sigma_lowers = []
+        pis = []
 
-        sigma_l = np.sum(gamma, axis=0)
+        log_probs = np.array(list(map(lambda z: self.observation_log_probability(z), zs)))
+        max_log_prob = np.max(log_probs)
+        revised_scalings = np.exp(max_log_prob - log_probs)
 
-        pi = self.gamma[0, :]
-
-        return a_u, a_l, sigma_l, pi
-
-    def learn_mus(self, z):
-        z_arr = np.array(z)
-        mus_u = np.sum(self.gamma * z_arr[:, np.newaxis], axis=0)
-        mus_l = np.sum(self.gamma, axis=0)
-
-        return mus_u, mus_l
-
-    def learn_from_sequence(self, zs):
         E = len(zs)
 
-        mus_us = []
-        mus_ls = []
-        gammas = []
-        ksis = []
-
-        for z in zs:
-            self.forward_algorithm(z)
-            self.backward_algorithm(z)
-            self.calculate_gamma()
-            self.calculate_ksi(z)
-
+        gammas = ksis = []
+        for i, z in enumerate(zs):
+            self.forward_backward_algorithm(z)
             gammas.append(self.gamma)
             ksis.append(self.ksi)
 
-            mus_u, mus_l = self.learn_mus(z)
-            mus_us.append(mus_u)
-            mus_ls.append(mus_l)
+        for gamma, z in zip(gammas, zs):
+            mu_upper, mu_lower = self.calculate_mu(z, gamma)
+            mu_uppers.append(mu_upper)
+            mu_lowers.append(mu_lower)
 
-        self.mus = (sum(mus_us) / sum(mus_ls)).reshape(self.M, -1)
+        self.mu = (sum(mu_uppers) / sum(mu_lowers)).reshape(self.M, -1)
 
-        a_us = []
-        a_ls = []
-        sigma_us = []
-        sigma_ls = []
-        pis = []
-        for z, gamma, ksi in zip(zs, gammas, ksis):
-            z_arr = np.array(z).reshape(gamma.shape[0], -1)
-            a_u, a_l, sigma_l, pi = self.learn(gamma, ksi)
-            sigma_u = self.compute_sigma_u(z_arr, self.mus, gamma)
-            a_us.append(a_u)
-            a_ls.append(a_l)
-            sigma_us.append(sigma_u)
-            sigma_ls.append(sigma_l)
+        for scaling, gamma, ksi, z in zip(revised_scalings, gammas, ksis, zs):
+            P_upper, P_lower = DiscreteHiddenMarkovModel.calculate_inner_transition_probability_sums(ksi, gamma)
+            P_uppers.append(P_upper*scaling)
+            P_lowers.append(P_lower*scaling)
+
+            sigma_upper, sigma_lower = self.compute_sigma(z, self.mu, gamma)
+            sigma_uppers.append(sigma_upper)
+            sigma_lowers.append(sigma_lower)
+
+            pi = self.gamma[0, :]
             pis.append(pi)
-
-        self.P = sum(a_us) / sum(a_ls)[:, np.newaxis]
-        self.sigmas = sum(sigma_us) / sum(sigma_ls)[:, np.newaxis, np.newaxis]
+        
+        self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
+        self.sigma = sum(sigma_uppers) / sum(sigma_lowers)[:, np.newaxis, np.newaxis]
         self.pi = sum(pis) / E
-        self.emission_probability = GaussianEmissionProbability(self.mus, self.sigmas)
+        self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
 
-    def compute_sigma_u(self, z, mus, gamma):
-        T = z.shape[0]
-        D = z.shape[1]
+    @staticmethod
+    def calculate_mu(z: list, gamma: np.ndarray):
+        z_array = np.array(z)
+        mu_upper = np.sum(gamma * z_array[:, np.newaxis], axis=0)
+        mu_lower = np.sum(gamma, axis=0)
+
+        return mu_upper, mu_lower
+
+    @staticmethod
+    def compute_sigma(z: list, mu: np.ndarray, gamma: np.ndarray):
+        z_array = np.array(z).reshape(gamma.shape[0], -1)
+        T = z_array.shape[0]
+        D = z_array.shape[1]
         M = gamma.shape[1]
-        sigmas = []
+        sigma = []
         for m in range(M):
             comps = []
             for t in range(T):
-                arr = (z[t, :] - mus[m, :]).reshape(D, 1)
+                arr = (z_array[t, :] - mu[m, :]).reshape(D, 1)
                 comps.append(gamma[t, m] * np.matmul(arr, arr.T))
             comps = np.array(comps)
             assert comps.shape == (T, D, D)
             sum_over_t = np.sum(comps, axis=0)
             assert sum_over_t.shape == (D, D)
-            sigmas.append(sum_over_t)
+            sigma.append(sum_over_t)
+        
+        sigma_upper = np.array(sigma)
+        sigma_lower = np.sum(gamma, axis=0)
 
-        return np.array(sigmas)
-
-    def reestimate(self, zs: list, iterations=10):
-        for _ in range(iterations):
-            self.learn_from_sequence(zs)
+        return sigma_upper, sigma_lower
