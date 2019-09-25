@@ -4,13 +4,14 @@ from functools import reduce, partial
 import numpy as np
 from numpy import ma
 
-from numba import njit
-
 from scipy.stats import multivariate_normal
 
 from math import exp, sqrt, pi
 
 from itertools import product
+
+import warnings
+
 
 
 class InitialProbability:
@@ -121,14 +122,27 @@ class HiddenMarkovModel:
 
 
         #Implement setter for P at some stage, please
-        self.P: np.ndarray = self.transition_probability.eval(
+        self._P: np.ndarray = self.transition_probability.eval(
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
 
         #Ensuring that all rows in P sum to 1.
-        sumP: np.ndarray = np.sum(self.P, axis=1)
-        self.P = (self.P.T * 1 / sumP).T
-    
+        sumP: np.ndarray = np.sum(self._P, axis=1)
+        self._P = (self._P.T / sumP).T
+
+    @property
+    def P(self):
+        return self._P
+
+    @P.setter
+    def P(self, value):
+        unscaled_P = value
+        sum_unscaled_P = np.sum(self._P, axis=1)
+        scaled_P = (unscaled_P.T / sum_unscaled_P).T
+        if not np.all(np.isclose(unscaled_P, scaled_P, atol=1e-3)):
+            warnings.warn("Unscaled transition matrix supplied to setter.", UserWarning)
+        self._P = scaled_P
+        
     def evaluate_initial_probabilities(self):
         pi = self.initial_probability.eval(self.state_ids)
         return pi
@@ -311,6 +325,26 @@ class HiddenMarkovModel:
         self.forward_algorithm(z)
         return -np.sum(self.c)
 
+    def reestimation(self, zs, rtol=1e-3):
+        try:
+            hasattr(self, "baum_welch")
+        except:
+            raise NotImplementedError("Class must have a EM-method named \"baum_welch\".")
+        history = []
+        initial_log_probability = sum(map(self.observation_log_probability, zs))
+        history.append(initial_log_probability)
+        previous_log_probability = -np.inf
+        current_log_probability = initial_log_probability
+        while (previous_log_probability - current_log_probability)/current_log_probability > rtol:
+            previous_log_probability = current_log_probability
+            self.baum_welch(zs)
+            current_log_probability = sum(map(self.observation_log_probability, zs))
+            history.append(current_log_probability)
+        
+        return np.array(history)
+
+        
+
 
 class DiscreteEmissionProbability:
     """Class for representing probabilities for discrete observations.
@@ -345,7 +379,7 @@ class DiscreteEmissionProbability:
         unscaled_b = value
         scaled_b = value / np.sum(unscaled_b, axis=0)
         if not np.all(np.isclose(unscaled_b, scaled_b, atol=1e-3)):
-            raise Warning("Unscaled transition matrix supplied to setter.")
+            warnings.warn("Unscaled emission matrix supplied to setter.", UserWarning)
         self._b = scaled_b
 
     def eval(self, z: list, x: np.ndarray):
@@ -387,12 +421,12 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
 
-        self.P: np.ndarray = self.transition_probability.eval(
+        self._P: np.ndarray = self.transition_probability.eval(
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
 
-        sumP: np.ndarray = np.sum(self.P, axis=1)
-        self.P = (self.P.T * 1 / sumP).T
+        sumP: np.ndarray = np.sum(self._P, axis=1)
+        self._P = (self._P.T / sumP).T
 
     def baum_welch(self, zs):
         P_uppers = []
@@ -469,6 +503,18 @@ class GaussianEmissionProbability:
 
 
 class GaussianHiddenMarkovModel(HiddenMarkovModel):
+    """Class for representing Hidden Markov Models where the state dependency is expressed entirely through
+    unique means and covariances for the different states.
+    
+    Parameters:
+    transition_probability -- A function that takes two arguments, with each being argument existing in the state space,
+    and returns the probability (not necessarily normalized) of transitioning from the first state into the second.
+    initial_probability -- A function that, given a state, returns the probability of starting off in the given state.
+    states -- A list of all the states in the state space.
+    mu -- An array with shape (M, D), where M is the cardinality of the state space and D is the dimension of
+    the observations. Each row is the initial mean for the M different states. 
+    sigma  -- An array with shape (M, D, D), where the mth slice along the first axis is the initial covariance matrix.    
+    """
     def __init__(
         self,
         transition_probability: Callable[[Any, Any], float],
@@ -493,12 +539,12 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
 
-        self.P: np.ndarray = self.transition_probability.eval(
+        self._P: np.ndarray = self.transition_probability.eval(
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
 
-        sumP: np.ndarray = np.sum(self.P, axis=1)
-        self.P = (self.P.T * 1 / sumP).T
+        sumP: np.ndarray = np.sum(self._P, axis=1)
+        self._P = (self._P.T * 1 / sumP).T
 
     def baum_welch(self, zs: list):
         P_uppers = []
