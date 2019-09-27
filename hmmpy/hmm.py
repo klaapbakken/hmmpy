@@ -561,7 +561,6 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
 
         E = len(zs)
 
-        gammas = ksis = []
         for scaling, z in zip(revised_scalings, zs):
             self.forward_backward_algorithm(z)
             gamma = self.gamma
@@ -583,7 +582,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             pis.append(pi)
         
         self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
-        self.mu = (sum(mu_uppers) / sum(mu_lowers)).reshape(self.M, -1)
+        self.mu = (sum(mu_uppers) / (sum(mu_lowers)[:, np.newaxis])).reshape(self.M, -1)
         self.sigma = sum(sigma_uppers) / sum(sigma_lowers)[:, np.newaxis, np.newaxis]
         self.pi = sum(pis) / E
         self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
@@ -591,7 +590,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
     @staticmethod
     def calculate_mu(z: list, gamma: np.ndarray):
         z_array = np.array(z)
-        mu_upper = np.sum(gamma * z_array[:, np.newaxis], axis=0)
+        mu_upper = np.einsum("ij,ik->kj", z_array, gamma)
         mu_lower = np.sum(gamma, axis=0)
 
         return mu_upper, mu_lower
