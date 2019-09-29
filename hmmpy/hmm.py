@@ -3,6 +3,7 @@ from functools import reduce, partial
 
 import numpy as np
 from numpy import ma
+from numpy.linalg import det
 
 from scipy.stats import multivariate_normal
 
@@ -290,7 +291,27 @@ class HiddenMarkovModel:
         beta = self.beta
 
         self.gamma = self.calculate_gamma(alpha, beta)
+        self.gamma = self.avoid_zeros_2dim(self.gamma)
         self.ksi = self.calculate_ksi(z, P, l, alpha, beta)
+        self.ksi = self.avoid_zeros_3dim(self.ksi)
+
+    @staticmethod
+    def avoid_zeros_2dim(matrix, atol=1e-21):
+        zero_indices = np.where(np.isclose(matrix, 0, atol=atol))
+        non_zero_indices = np.where(~np.isclose(matrix, 0, atol=atol))
+        smallest_non_zero = np.min(matrix[non_zero_indices[0], non_zero_indices[1]])
+        new_matrix = matrix.copy()
+        new_matrix[zero_indices[0], zero_indices[1]] = smallest_non_zero
+        return new_matrix
+
+    @staticmethod
+    def avoid_zeros_3dim(matrix, atol=1e-21):
+        zero_indices = np.where(np.isclose(matrix, 0, atol=atol))
+        non_zero_indices = np.where(~np.isclose(matrix, 0, atol=atol))
+        smallest_non_zero = np.min(matrix[non_zero_indices[0], non_zero_indices[1], non_zero_indices[2]])
+        new_matrix = matrix.copy()
+        new_matrix[zero_indices[0], zero_indices[1], zero_indices[2]] = smallest_non_zero
+        return new_matrix
 
     @staticmethod
     def calculate_ksi(
@@ -315,6 +336,28 @@ class HiddenMarkovModel:
         sum_over_all_states = np.sum(alpha_beta_product, axis=1)
         gamma = alpha_beta_product / sum_over_all_states[:, np.newaxis]
         return gamma
+
+    def baum_welch(self, zs):
+        P_uppers = []
+        P_lowers = []
+
+        log_probs = np.array(
+            list(map(lambda z: self.observation_log_probability(z), zs))
+        )
+        max_log_prob = np.max(log_probs)
+        revised_scalings = np.exp(max_log_prob - log_probs)
+
+        E = len(zs)
+        for i, z in enumerate(zs):
+            self.forward_backward_algorithm(z)
+
+            P_upper, P_lower = DiscreteHiddenMarkovModel.calculate_inner_transition_probability_sums(
+                self.ksi, self.gamma
+            )
+            P_uppers.append(P_upper * revised_scalings[i])
+            P_lowers.append(P_lower * revised_scalings[i])
+
+        self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
 
     def observation_log_probability(self, z: list):
         self.forward_algorithm(z)
@@ -596,8 +639,30 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
         self.mu = (sum(mu_uppers) / (sum(mu_lowers)[:, np.newaxis])).reshape(self.M, -1)
         self.sigma = sum(sigma_uppers) / sum(sigma_lowers)[:, np.newaxis, np.newaxis]
+        #self.sigma = self.avoid_singular_matrices(self.sigma)
         self.pi = sum(pis) / E
         self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
+
+    @staticmethod
+    def detect_singular_matrices(sigma_bold):
+        indices = []
+        for index, matrix in enumerate(sigma_bold):
+            if np.isclose(det(matrix), 0):
+                indices.append(index)
+        return len(indices) > 0, np.array(indices)
+
+
+    @staticmethod
+    def avoid_singular_matrices(sigma_bold):
+        sigma_bold_copy = sigma_bold.copy()
+        singular, indices = GaussianHiddenMarkovModel.detect_singular_matrices(sigma_bold_copy)
+        while singular:
+            sigma_bold_copy[indices, :, :] = (
+                sigma_bold_copy[indices, :, :] + np.eye(2)*np.random.uniform(-1e-3, 1e-3)
+            )
+            singular, indices = GaussianHiddenMarkovModel.detect_singular_matrices(sigma_bold_copy)
+        return sigma_bold_copy
+
 
     @staticmethod
     def calculate_mu(z: list, gamma: np.ndarray):
