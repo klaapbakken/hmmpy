@@ -344,10 +344,9 @@ class HiddenMarkovModel:
         log_probs = np.array(
             list(map(lambda z: self.observation_log_probability(z), zs))
         )
-        max_log_prob = np.max(log_probs)
-        revised_scalings = np.exp(max_log_prob - log_probs)
+        min_log_prob = np.min(log_probs)
+        revised_scalings = np.exp(min_log_prob - log_probs)
 
-        E = len(zs)
         for i, z in enumerate(zs):
             self.forward_backward_algorithm(z)
 
@@ -478,8 +477,8 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         log_probs = np.array(
             list(map(lambda z: self.observation_log_probability(z), zs))
         )
-        max_log_prob = np.max(log_probs)
-        revised_scalings = np.exp(max_log_prob - log_probs)
+        min_log_prob = np.min(log_probs)
+        revised_scalings = np.exp(min_log_prob - log_probs)
 
         E = len(zs)
         for i, z in enumerate(zs):
@@ -607,8 +606,8 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         log_probs = np.array(
             list(map(lambda z: self.observation_log_probability(z), zs))
         )
-        max_log_prob = np.max(log_probs)
-        revised_scalings = np.exp(max_log_prob - log_probs)
+        min_log_prob = np.min(log_probs)
+        revised_scalings = np.exp(min_log_prob - log_probs)
 
         E = len(zs)
 
