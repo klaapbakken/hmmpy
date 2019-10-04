@@ -154,7 +154,7 @@ class HiddenMarkovModel:
         l = np.zeros((N, self.M))
         for n in range(N):
             l[n, :] = self.emission_probability.eval([z[n]] * self.M, self.state_ids)
-        return l
+        return np.clip(l, a_min=1e-12, a_max=None)
 
     def viterbi(self, z: list):
         P = self.P
@@ -291,27 +291,7 @@ class HiddenMarkovModel:
         beta = self.beta
 
         self.gamma = self.calculate_gamma(alpha, beta)
-        self.gamma = self.avoid_zeros_2dim(self.gamma)
         self.ksi = self.calculate_ksi(z, P, l, alpha, beta)
-        self.ksi = self.avoid_zeros_3dim(self.ksi)
-
-    @staticmethod
-    def avoid_zeros_2dim(matrix, atol=1e-21):
-        zero_indices = np.where(np.isclose(matrix, 0, atol=atol))
-        non_zero_indices = np.where(~np.isclose(matrix, 0, atol=atol))
-        smallest_non_zero = np.min(matrix[non_zero_indices[0], non_zero_indices[1]])
-        new_matrix = matrix.copy()
-        new_matrix[zero_indices[0], zero_indices[1]] = smallest_non_zero
-        return new_matrix
-
-    @staticmethod
-    def avoid_zeros_3dim(matrix, atol=1e-21):
-        zero_indices = np.where(np.isclose(matrix, 0, atol=atol))
-        non_zero_indices = np.where(~np.isclose(matrix, 0, atol=atol))
-        smallest_non_zero = np.min(matrix[non_zero_indices[0], non_zero_indices[1], non_zero_indices[2]])
-        new_matrix = matrix.copy()
-        new_matrix[zero_indices[0], zero_indices[1], zero_indices[2]] = smallest_non_zero
-        return new_matrix
 
     @staticmethod
     def calculate_ksi(
@@ -638,30 +618,8 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
         self.mu = (sum(mu_uppers) / (sum(mu_lowers)[:, np.newaxis])).reshape(self.M, -1)
         self.sigma = sum(sigma_uppers) / sum(sigma_lowers)[:, np.newaxis, np.newaxis]
-        #self.sigma = self.avoid_singular_matrices(self.sigma)
         self.pi = sum(pis) / E
         self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
-
-    @staticmethod
-    def detect_singular_matrices(sigma_bold):
-        indices = []
-        for index, matrix in enumerate(sigma_bold):
-            if np.isclose(det(matrix), 0):
-                indices.append(index)
-        return len(indices) > 0, np.array(indices)
-
-
-    @staticmethod
-    def avoid_singular_matrices(sigma_bold):
-        sigma_bold_copy = sigma_bold.copy()
-        singular, indices = GaussianHiddenMarkovModel.detect_singular_matrices(sigma_bold_copy)
-        while singular:
-            sigma_bold_copy[indices, :, :] = (
-                sigma_bold_copy[indices, :, :] + np.eye(2)*np.random.uniform(-1e-3, 1e-3)
-            )
-            singular, indices = GaussianHiddenMarkovModel.detect_singular_matrices(sigma_bold_copy)
-        return sigma_bold_copy
-
 
     @staticmethod
     def calculate_mu(z: list, gamma: np.ndarray):
