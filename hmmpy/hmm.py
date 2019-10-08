@@ -342,7 +342,7 @@ class HiddenMarkovModel:
         self.forward_algorithm(z)
         return -np.sum(self.c)
 
-    def reestimation(self, zs, rtol=1e-3):
+    def reestimation(self, zs, n):
         try:
             hasattr(self, "baum_welch")
         except:
@@ -350,12 +350,13 @@ class HiddenMarkovModel:
         history = []
         initial_log_probability = sum(map(self.observation_log_probability, zs))
         history.append(initial_log_probability)
-        previous_log_probability = -np.inf
-        current_log_probability = initial_log_probability
-        while (
-            previous_log_probability - current_log_probability
-        ) / current_log_probability > rtol:
-            previous_log_probability = current_log_probability
+        #previous_log_probability = -np.inf
+        #current_log_probability = initial_log_probability
+        #while (
+        #    previous_log_probability - current_log_probability
+        #) / current_log_probability > rtol:
+        for i in range(n):
+            #previous_log_probability = current_log_probability
             self.baum_welch(zs)
             current_log_probability = sum(map(self.observation_log_probability, zs))
             history.append(current_log_probability)
