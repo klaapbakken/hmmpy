@@ -436,6 +436,7 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         initial_probability: Callable[[int], float],
         states: List[Any],
         symbols: List[Any],
+        enable_warnings=False,
     ):
         self.states = states
         self.symbols = symbols
@@ -450,6 +451,7 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         self.initial_probability: InitialProbability = InitialProbability(
             initial_probability, self.states
         )
+        self.enable_warnings = enable_warnings
 
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
@@ -564,6 +566,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         states: list,
         mu: list,
         sigma: list,
+        enable_warnings=False,
     ):
         self.states = states
         self.M: int = len(states)
@@ -577,6 +580,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         self.initial_probability: InitialProbability = InitialProbability(
             initial_probability, self.states
         )
+        self.enable_warnings = enable_warnings
 
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
