@@ -139,13 +139,13 @@ class HiddenMarkovModel:
     @P.setter
     def P(self, value: np.ndarray) -> None:
         unscaled_P: np.ndarray = value
-        sum_unscaled_P: np.ndarray = np.sum(self._P, axis=1)
+        sum_unscaled_P: np.ndarray = np.sum(unscaled_P, axis=1)
         scaled_P = (unscaled_P.T / sum_unscaled_P).T
         if (
             not np.all(np.isclose(unscaled_P, scaled_P, atol=1e-3))
             and self.enable_warnings
         ):
-            warnings.warn("Unscaled transition matrix supplied to setter.", UserWarning)
+            warnings.warn(f"Unscaled transition matrix supplied to setter: {np.sum(unscaled_P)} != {self.M}", UserWarning)
         self._P = scaled_P
 
     def evaluate_initial_probabilities(self) -> np.ndarray:
@@ -368,7 +368,7 @@ class HiddenMarkovModel:
         # while (
         #    previous_log_probability - current_log_probability
         # ) / current_log_probability > rtol:
-        for i in range(n):
+        for _ in range(n):
             # previous_log_probability = current_log_probability
             self.baum_welch(zs)
             current_log_probability = sum(map(self.observation_log_probability, zs))
