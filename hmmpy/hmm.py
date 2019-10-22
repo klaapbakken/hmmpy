@@ -105,6 +105,7 @@ class HiddenMarkovModel:
         initial_probability: Callable[[int], float],
         states: List[Any],
         enable_warnings=False,
+        frozen_mask=None
     ):
         self.states: List[Any] = states
         self.M: int = len(states)
@@ -119,6 +120,7 @@ class HiddenMarkovModel:
             initial_probability, self.states
         )
         self.enable_warnings = enable_warnings
+        self.frozen_mask = frozen_mask
 
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
@@ -129,8 +131,8 @@ class HiddenMarkovModel:
         ).reshape(self.M, self.M)
 
         # Ensuring that all rows in P sum to 1.
-        sumP: np.ndarray = np.sum(self._P, axis=1)
-        self._P = (self._P.T / sumP).T
+        sumP: np.ndarray = np.sum(self.P, axis=1)
+        self.P = (self.P.T / sumP).T
 
     @property
     def P(self) -> np.ndarray:
@@ -138,7 +140,10 @@ class HiddenMarkovModel:
 
     @P.setter
     def P(self, value: np.ndarray) -> None:
-        unscaled_P: np.ndarray = value
+        if self.frozen_mask is not None:
+            unscaled_P = value*self.frozen_mask
+        else:
+            unscaled_P: np.ndarray = value
         sum_unscaled_P: np.ndarray = np.sum(unscaled_P, axis=1)
         scaled_P = (unscaled_P.T / sum_unscaled_P).T
         if (
