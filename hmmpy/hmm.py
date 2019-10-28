@@ -442,6 +442,7 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         states: List[Any],
         symbols: List[Any],
         enable_warnings=False,
+        frozen_mask=None
     ):
         self.states = states
         self.symbols = symbols
@@ -457,6 +458,7 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
             initial_probability, self.states
         )
         self.enable_warnings = enable_warnings
+        self.frozen_mask = frozen_mask
 
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
@@ -572,6 +574,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         mu: list,
         sigma: list,
         enable_warnings=False,
+        frozen_mask=None
     ):
         self.states = states
         self.M: int = len(states)
@@ -586,6 +589,7 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             initial_probability, self.states
         )
         self.enable_warnings = enable_warnings
+        self.frozen_mask = frozen_mask
 
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
