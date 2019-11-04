@@ -82,7 +82,7 @@ class EmissionProbability:
         the probability of observing the ith element of the first argument when in
         the state identified by the state ID in the ith element of the second argument.
         """
-        return np.array([self.l(obs, self.states[state]) for obs, state in zip(z, x)])
+        return np.squeeze(np.array([self.l(obs, self.states[state]) for obs, state in zip(z, x)]))
 
 
 class HiddenMarkovModel:
@@ -582,6 +582,8 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         self.transition_probability: TransitionProbability = TransitionProbability(
             transition_probability, self.states
         )
+        self.mu = mu
+        self.sigma = sigma
         self.emission_probability: GaussianEmissionProbability = GaussianEmissionProbability(
             mu, sigma
         )
