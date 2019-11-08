@@ -6,7 +6,7 @@ from numpy.linalg import det
 from scipy.stats import multivariate_normal
 from math import exp, sqrt, pi
 from itertools import product
-from typing import Callable, Any, Tuple, List, Type
+from typing import Callable, Any, Tuple, List, Type, Dict
 from functools import reduce, partial
 
 
@@ -92,20 +92,22 @@ class HiddenMarkovModel:
 
     Parameters:
     ---
-    transition_probability -- As in TransitionProbability
-    emission_probability -- As in EmissionProbability
-    initial_probability -- As in InitialProbability
+    transition_probability -- As in TransitionProbability.
+    emission_probability -- As in EmissionProbability.
+    initial_probability -- As in InitialProbability.
     states -- A list of all the states in the state space.
+    enable_warnings -- Boolean. Indicates whether warnings should be displayed.
+    frozen_mask -- A matrix with 0's and 1's indicating whether certain transitions should be illegal.
+    Transition from state i to to state j is set to zero if (i, j) in frozen_mask is zero. 
     """
-
     def __init__(
         self,
         transition_probability: Callable[[Any, Any], float],
         emission_probability: Callable[[Any, int], float],
         initial_probability: Callable[[int], float],
         states: List[Any],
-        enable_warnings=False,
-        frozen_mask=None
+        enable_warnings: bool = False,
+        frozen_mask: np.ndarray = None
     ):
         self.states: List[Any] = states
         self.M: int = len(states)
@@ -119,27 +121,27 @@ class HiddenMarkovModel:
         self.initial_probability: InitialProbability = InitialProbability(
             initial_probability, self.states
         )
-        self.enable_warnings = enable_warnings
-        self.frozen_mask = frozen_mask
+        self.enable_warnings: bool = enable_warnings
+        #Enables setting certain transition probabilities to zero
+        #Positions that are zero in "frozen_mask" correspond to zero transition probabilities in the transition matrix
+        self.frozen_mask: np.ndarray = frozen_mask
 
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
 
-        # Implement setter for P at some stage, please
-        self._P: np.ndarray = self.transition_probability.eval(
+        P: np.ndarray = self.transition_probability.eval(
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
 
-        # Ensuring that all rows in P sum to 1.
-        sumP: np.ndarray = np.sum(self.P, axis=1)
-        self.P = (self.P.T / sumP).T
+        #Invoking the setter to ensure the P is satisfied the constraints
+        self.P: np.ndarray = P
 
     @property
     def P(self) -> np.ndarray:
         return self._P
 
     @P.setter
-    def P(self, value: np.ndarray) -> None:
+    def P(self, value: np.ndarray):
         if self.frozen_mask is not None:
             unscaled_P = value*self.frozen_mask
         else:
@@ -154,26 +156,53 @@ class HiddenMarkovModel:
         self._P = scaled_P
 
     def evaluate_initial_probabilities(self) -> np.ndarray:
+        """Creates an array of initial probabilities for the various states."""
         pi: np.ndarray = self.initial_probability.eval(self.state_ids)
         return pi
 
     def evaluate_emission_probabilities(self, z: List[Any]) -> np.ndarray:
+        """Creates a 2-dimensional array of emission probabilities for the observations at various times, for various states.
+        
+        Parameters:
+        ---
+        z -- A list of observations of the type expected by the InitialProbability class.
+        """
         N: int = len(z)
         l: np.ndarray = np.zeros((N, self.M))
         for n in range(N):
             l[n, :] = self.emission_probability.eval([z[n]] * self.M, self.state_ids)
+        #This is a hacky solution to a problem that should probably be handled in different manner.
+        #The underlying is issue is that zero, or close to zero, values, are propogated throughout the algorithm and leads to division by zero at later stages.
         return np.clip(l, a_min=1e-9, a_max=None)
 
     def viterbi(self, z: List[Any]) -> np.ndarray:
+        """Run Viterbi in order to obtain the state sequence that maximizes the posterior probability.
+        In other words, the argmax of the probability of a state sequence conditioned the observed sequence.
+        A wrapper around the internals.
+
+        Parameters:
+        ---
+        z -- List of observations.
+        """
         P: np.ndarray = self.P
         pi: np.ndarray = self.evaluate_initial_probabilities()
         l: np.ndarray = self.evaluate_emission_probabilities(z)
-        return self.log_viterbi_internals(z, P, pi, l)
+        return self.log_viterbi_internals(z, P, l, pi)
 
     @staticmethod
     def viterbi_internals(
-        z: List[Any], P: np.ndarray, pi: np.ndarray, l: np.ndarray
+        z: List[Any], P: np.ndarray, l: np.ndarray, pi: np.ndarray
     ) -> np.ndarray:
+        """Simple, self-contained, straight-forward implementation of Viterbi. 
+        Should probably not be used, use log_viterbi_internals instead.
+        
+        Parameters:
+        ---
+        z -- List of observations.
+        P -- The transition matrix.
+        pi -- The initial probabilities.
+        l -- The emission probabilities.
+        """
         N: int = len(z)
         assert pi.shape[0] == l.shape[1]
         M: int = pi.shape[0]
@@ -201,8 +230,17 @@ class HiddenMarkovModel:
 
     @staticmethod
     def log_viterbi_internals(
-        z: List[Any], P: np.ndarray, pi: np.ndarray, l: np.ndarray
+        z: List[Any], P: np.ndarray, l: np.ndarray, pi: np.ndarray
     ) -> np.ndarray:
+        """Viterbi in log-space. More stable, i.e. resistant to almost-zero values, than the regular implementation.
+        
+        Parameters:
+        ---
+        z -- List of observations.
+        P -- The transition matrix.
+        pi -- The initial probabilities.
+        l -- The emission probabilities.
+        """
         N: int = len(z)
         assert pi.shape[0] == l.shape[1]
         M = pi.shape[0]
@@ -236,10 +274,18 @@ class HiddenMarkovModel:
         return q_star.astype(int)
 
     def decode(self, z: List[Any]) -> List[Any]:
+        """The Viterbi method returns an array of state ids.
+        This returns the corresponding states instead.
+
+        Parameters:
+        ---
+        z -- List of observations.
+        """
         state_ids: np.ndarray = self.viterbi(z)
         return list(map(lambda x: self.states[x], state_ids))
 
     def forward_algorithm(self, z: List[Any]):
+        """Run the forward algorithm with object-specific arguments to the internals."""
         P: np.ndarray = self.P
         pi: np.ndarray = self.evaluate_initial_probabilities()
         l: np.ndarray = self.evaluate_emission_probabilities(z)
@@ -248,7 +294,18 @@ class HiddenMarkovModel:
     @staticmethod
     def forward_algorithm_internals(
         z: List[Any], P: np.ndarray, l: np.ndarray, pi: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ):
+        """The actual implementation of the forward-algorithm. Returns scalings and alpha. 
+        Scaling is needed to avoid numerical errors for longer observation sequences. 
+        See Rabiner's "Fundamentals of Speech Processing" or similar resource.
+
+        Parameters:
+        ---
+        z -- List of observations.
+        P -- The transition matrix.
+        pi -- The initial probabilities.
+        l -- The emission probabilities.
+        """
         N: int = len(z)
         assert pi.shape[0] == l.shape[1]
         M: int = pi.shape[0]
@@ -271,6 +328,12 @@ class HiddenMarkovModel:
         return c, alpha
 
     def backward_algorithm(self, z: List[Any]) -> None:
+        """Wrapper around the backward algorithm, calling the internals with object-specific attributes.
+        
+        Parameters:
+        ---
+        z -- List of observations.
+        """
         assert hasattr(self, "c"), "Run forward algorithm first!"
         P: np.ndarray = self.P
         c: np.ndarray = self.c
@@ -282,12 +345,22 @@ class HiddenMarkovModel:
     def backward_algorithm_internals(
         z: List[Any], P: np.ndarray, l: np.ndarray, pi: np.ndarray, c: np.ndarray
     ):
+        """The actual implementation of the backward-algorithm. Returns beta, an array.
+        See Rabiner's "Fundamentals of Speech Processing" or similar resource.
+
+        Parameters:
+        ---
+        z -- List of observations.
+        P -- The transition matrix.
+        l -- The emission probabilities.
+        pi -- The initial probabilities.
+        """
         N: int = len(z)
         assert pi.shape[0] == l.shape[1]
         M: int = pi.shape[0]
 
         beta: np.ndarray = np.zeros((N, M))
-        beta[N - 1, :] = 1
+        beta[N - 1, :] = 1*c[N-1]
 
         n: int
         for n in np.arange(N - 2, -1, -1):
@@ -298,6 +371,13 @@ class HiddenMarkovModel:
         return beta
 
     def forward_backward_algorithm(self, z: List[Any]):
+        """Runs both forward and backward algorithm in correct order and computes ksi and gamma.
+        See Rabiner for information on interpretation of these values. 
+        
+        Parameters:
+        ---
+        z -- List of observations.
+        """
         self.forward_algorithm(z)
         self.backward_algorithm(z)
 
@@ -314,6 +394,15 @@ class HiddenMarkovModel:
     def calculate_ksi(
         z: List[Any], P: np.ndarray, l: np.ndarray, alpha: np.ndarray, beta: np.ndarray
     ) -> np.ndarray:
+        """Compute ksi. The interpretation of ksi is the expected number of transitions from state i to j at time t.
+
+        Parameters:
+        ---
+        z -- List of observations.
+        P -- The transition matrix.
+        l -- The emission probabilities.
+        pi -- The initial probabilities.
+        """
         N: int = len(z)
         assert l.shape[0] == alpha.shape[0] == beta.shape[0] == N
         assert l.shape[1] == alpha.shape[1] == beta.shape[1]
@@ -330,53 +419,96 @@ class HiddenMarkovModel:
 
     @staticmethod
     def calculate_gamma(alpha: np.ndarray, beta: np.ndarray) -> np.ndarray:
+        """Compute gamma. The interpretation of gamma is the expected number of transitions away from state i at time t.
+
+        Parameters:
+        ---
+        z -- List of observations.
+        P -- The transition matrix.
+        l -- The emission probabilities.
+        pi -- The initial probabilities.
+        """
         alpha_beta_product: np.ndarray = alpha * beta
         sum_over_all_states: np.ndarray = np.sum(alpha_beta_product, axis=1)
         gamma: np.ndarray = alpha_beta_product / sum_over_all_states[:, np.newaxis]
         return gamma
 
     def baum_welch(self, zs: List[List[Any]]):
-        P_uppers = []
-        P_lowers = []
+        """Baum-Welch algorithm. Expectation-maximization. Updates the parameters to increase the expected log-probability of the observation sequence(s).
 
-        log_probs = np.array(
-            list(map(lambda z: self.observation_log_probability(z), zs))
-        )
-        min_log_prob = np.min(log_probs)
-        revised_scalings = np.exp(min_log_prob - log_probs)
+        Parameters:
+        ---
+        zs -- A list of observation sequences. 
+        """
+        P_numerators: List[np.ndarray] = []
+        P_denominators: List[np.ndarray] = []
 
-        for i, z in enumerate(zs):
+        #Compute the log-probability for each of the observation sequences. 
+        ksis: List[np.ndarray] = []
+        gammas: List[np.ndarray] = []
+        log_probs_list: List[float] = []
+        z: List[Any]
+        for z in zs:
             self.forward_backward_algorithm(z)
+            log_prob: float = -np.sum(np.log(self.c))
+            ksis.append(self.ksi)
+            gammas.append(self.gamma)
+            log_probs_list.append(log_prob)
+        log_probs: np.ndarray = np.array(log_probs_list)
 
-            P_upper, P_lower = DiscreteHiddenMarkovModel.calculate_inner_transition_probability_sums(
-                self.ksi, self.gamma
+        #Scaling for each observation when summing over results from multiple observations
+        min_log_prob: float = np.min(log_probs)
+        revised_scalings: np.ndarray = np.exp(min_log_prob - log_probs)
+
+        revised_scaling: int
+        ksi: np.ndarray
+        gamma: np.ndarray
+        for gamma, ksi, revised_scaling in zip(gammas, ksis, revised_scalings):
+            P_numerator: np.ndarray; P_denominator: np.ndarray
+            P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
+                ksi, gamma
             )
-            P_uppers.append(P_upper * revised_scalings[i])
-            P_lowers.append(P_lower * revised_scalings[i])
+            P_numerators.append(P_numerator * revised_scaling)
+            P_denominators.append(P_denominator * revised_scaling)
 
-        self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
+        self.P = sum(P_numerators) / sum(P_denominators)[:, np.newaxis]
 
-    def observation_log_probability(self, z: List[Any]):
+    @staticmethod
+    def calculate_inner_transition_probability_sums(ksi: np.ndarray, gamma: np.ndarray):
+        """Computing the sums required for the updated transition probabiltites.
+        
+        Parameters:
+        ---
+        ksi -- 3-dimensional array. First axis is time index, second and third are state indices.
+        gamma -- 2-dimensional array. First axis is time index, second is state index. 
+        """
+        numerator_sum: np.ndarray = np.sum(ksi, axis=0)
+        denominator_sum: np.ndarray = np.sum(gamma, axis=0)
+        return numerator_sum, denominator_sum
+
+    def observation_log_probability(self, z: List[Any]) -> float:
+        """Run forward algorithm to compute log probability of observation."""
         self.forward_algorithm(z)
-        return -np.sum(self.c)
+        return -np.sum(np.log(self.c))
 
-    def reestimation(self, zs, n):
+    def reestimation(self, zs: List[List[Any]], n: int) -> np.ndarray:
+        """Run Baum-Welch for a specified number of iterations.
+        
+        Parameters:
+        ---
+        zs -- List of observation sequences.
+        n -- Number of iterations.
+        """
         try:
             hasattr(self, "baum_welch")
         except:
-            raise NotImplementedError('Class must have a EM-method named "baum_welch".')
-        history = []
-        initial_log_probability = sum(map(self.observation_log_probability, zs))
+            raise NotImplementedError('Class must implement some form of the Baum-Welch algorithm. The method must be named "baum_welch".')
+        history: List[float] = []
+        initial_log_probability: float = np.mean(list(map(self.observation_log_probability, zs)))
         history.append(initial_log_probability)
-        # previous_log_probability = -np.inf
-        # current_log_probability = initial_log_probability
-        # while (
-        #    previous_log_probability - current_log_probability
-        # ) / current_log_probability > rtol:
         for _ in range(n):
-            # previous_log_probability = current_log_probability
             self.baum_welch(zs)
-            current_log_probability = sum(map(self.observation_log_probability, zs))
+            current_log_probability: float = np.mean(list(map(self.observation_log_probability, zs)))
             history.append(current_log_probability)
 
         return np.array(history)
@@ -396,15 +528,15 @@ class DiscreteEmissionProbability:
     symbols -- A list of all symbols that can be observed. 
     """
 
-    def __init__(self, emission_probability, states, symbols):
-        self.symbol_id_dictionary = {k: v for k, v in zip(symbols, range(len(symbols)))}
-        self.K = len(symbols)
-        self.M = len(states)
-        self.l = emission_probability
-        self._b = np.array(
+    def __init__(self, emission_probability: Callable[[Any], float], states: List[Any], symbols: List[Any]):
+        self.symbol_id_dictionary: Dict[Any, int] = {k: v for k, v in zip(symbols, range(len(symbols)))}
+        self.K: int = len(symbols)
+        self.M: int = len(states)
+        self.l: Callable[[Any], float] = emission_probability
+        b: np.ndarray = np.array(
             list(map(lambda x: self.l(x[0], x[1]), product(symbols, states)))
         ).reshape(self.K, self.M)
-        self._b = self._b / np.sum(self._b, axis=0)
+        self.b: np.ndarray = b
 
     @property
     def b(self):
@@ -412,12 +544,7 @@ class DiscreteEmissionProbability:
 
     @b.setter
     def b(self, value):
-        # Should not be set with unscaled array, safer option would be assert almost equal
-        unscaled_b = value
-        scaled_b = value / np.sum(unscaled_b, axis=0)
-        if not np.all(np.isclose(unscaled_b, scaled_b, atol=1e-3)):
-            warnings.warn("Unscaled emission matrix supplied to setter.", UserWarning)
-        self._b = scaled_b
+        self._b = value
 
     def eval(self, z: List[Any], x: np.ndarray):
         """Return an array where the ith element is the probability of observing the symbol in
@@ -463,74 +590,107 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
 
-        self._P: np.ndarray = self.transition_probability.eval(
+        P: np.ndarray = self.transition_probability.eval(
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
 
-        sumP: np.ndarray = np.sum(self._P, axis=1)
-        self._P = (self._P.T / sumP).T
+        #Invoking the setter to ensure the P is satisfied the constraints
+        self.P: np.ndarray = P
+
+    
+    @property
+    def b(self):
+        return self.emission_probability.b
+
+    @b.setter
+    def b(self, value):
+        unscaled_b = value
+        scaled_b = value / np.sum(unscaled_b, axis=0)
+        if not np.all(np.isclose(unscaled_b, scaled_b, atol=1e-3)) and self.enable_warnings:
+            warnings.warn("Unscaled emission matrix supplied to setter.", UserWarning)
+        self.emission_probability.b = scaled_b
 
     def baum_welch(self, zs):
-        P_uppers = []
-        P_lowers = []
-        l_uppers = []
-        l_lowers = []
+        """Baum-Welch for discrete observations.
+        
+        Parameters:
+        ---
+        zs -- List of observation sequences.
+        """
+        P_numerators = []
+        P_denominators = []
+        l_numerators = []
+        l_denominators = []
         pis = []
 
-        log_probs = np.array(
-            list(map(lambda z: self.observation_log_probability(z), zs))
-        )
-        min_log_prob = np.min(log_probs)
-        revised_scalings = np.exp(min_log_prob - log_probs)
-
+        #Compute the log-probability for each of the observation sequences. 
         E = len(zs)
-        for i, z in enumerate(zs):
+        ksis: List[np.ndarray] = []
+        gammas: List[np.ndarray] = []
+        log_probs_list: List[float] = []
+        for z in zs:
             self.forward_backward_algorithm(z)
+            log_prob: float = -np.sum(np.log(self.c))
+            ksis.append(self.ksi)
+            gammas.append(self.gamma)
+            log_probs_list.append(log_prob)
+        log_probs: np.ndarray = np.array(log_probs_list)
 
-            P_upper, P_lower = self.calculate_inner_transition_probability_sums(
-                self.ksi, self.gamma
+        #Scaling for each observation when summing over results from multiple observations
+        min_log_prob: float = np.min(log_probs)
+        revised_scalings: np.ndarray = np.exp(min_log_prob - log_probs)
+
+        revised_scaling: int
+        z: List[Any]
+        ksi: np.ndarray
+        gamma: np.ndarray
+        for z, gamma, ksi, revised_scaling in zip(zs, gammas, ksis, revised_scalings):
+            P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
+                ksi, gamma
             )
-            P_uppers.append(P_upper * revised_scalings[i])
-            P_lowers.append(P_lower * revised_scalings[i])
+            P_numerators.append(P_numerator * revised_scaling)
+            P_denominators.append(P_denominator * revised_scaling)
 
-            l_upper, l_lower = self.calculate_inner_emission_probability_sums(
-                z, self.gamma, self.symbols
+            l_numerator, l_denominator = self.calculate_inner_emission_probability_sums(
+                z, gamma, self.symbols
             )
-            l_uppers.append(l_upper * revised_scalings[i])
-            l_lowers.append(l_lower * revised_scalings[i])
+            l_numerators.append(l_numerator * revised_scaling)
+            l_denominators.append(l_denominator * revised_scaling)
 
-            pi = self.gamma[0, :]
+            pi = gamma[0, :]
             pis.append(pi)
 
-        self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
-        self.b = sum(l_uppers) / sum(l_lowers)
+        self.P = sum(P_numerators) / sum(P_denominators)[:, np.newaxis]
+        self.b = sum(l_numerator) / sum(l_denominators)
         self.pi = sum(pis) / E
-
-        self.emission_probability.b = self.b
-
-    @staticmethod
-    def calculate_inner_transition_probability_sums(ksi, gamma):
-        upper_sum = np.sum(ksi, axis=0)
-        lower_sum = np.sum(gamma, axis=0)
-        return upper_sum, lower_sum
 
     @staticmethod
     def calculate_inner_emission_probability_sums(z, gamma, symbols):
-        M = gamma.shape[1]
-        K = len(symbols)
-        upper_sum = np.ones((K, M))
+        """Calculates sum in update equations for emission probabilties.
+        
+        Parameters:
+        ---
+        z -- A list of observations.
+        gamma -- A 2-dimensional array containing all values for gamma. Time index on first axis, state index on second. 
+        symbols -- A list of all symbols.
+        """
+        M: int = gamma.shape[1]
+        K: int = len(symbols)
+        numerator_sum: np.ndarray = np.ones((K, M))
+        k: int
+        o: Any
         for k, o in enumerate(symbols):
             # Indices where observation equals symbol k
-            ts = np.where(np.array(z) == o)
+            ts: np.ndarray = np.where(np.array(z) == o)
             # All zeros
-            partial_gamma = np.zeros(gamma.shape)
+            partial_gamma: np.ndarray = np.zeros(gamma.shape)
             # Assign non-zero values to rows (times) where observation equals symbol k
             partial_gamma[ts, :] = gamma[ts, :]
             # Sum over all time-steps
-            upper_sum[k, :] = np.sum(partial_gamma, axis=0)
-        lower_sum = np.sum(gamma, axis=0)
+            numerator_sum[k, :] = np.sum(partial_gamma, axis=0)
+        denominator_sum: np.ndarray = np.sum(gamma, axis=0)
 
-        return upper_sum, lower_sum
+        return numerator_sum, denominator_sum
 
 
 class GaussianEmissionProbability:
@@ -596,76 +756,109 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         states_repeated: np.ndarray = np.repeat(self.state_ids, self.M)
         states_tiled: np.ndarray = np.tile(self.state_ids, self.M)
 
-        self._P: np.ndarray = self.transition_probability.eval(
+        P: np.ndarray = self.transition_probability.eval(
             states_repeated, states_tiled
         ).reshape(self.M, self.M)
 
-        sumP: np.ndarray = np.sum(self._P, axis=1)
-        self._P = (self._P.T * 1 / sumP).T
+        #Envoking the setter to ensure the P is satisfied the constraints
+        self.P: np.ndarray = P
+
+    @property
+    def mu(self):
+        return self.emission_probability.mu
+
+    @mu.setter
+    def mu(self, value):
+        self.emission_probability.mu = value
+
+    @property
+    def sigma(self):
+        return self.emission_probability.sigma
+
+    @sigma.setter
+    def sigma(self, value):
+        self.emission_probability.sigma= value
+
 
     def baum_welch(self, zs: list):
-        P_uppers = []
-        P_lowers = []
-        mu_uppers = []
-        mu_lowers = []
-        sigma_uppers = []
-        sigma_lowers = []
-        pis = []
+        """Baum-Welch for hidden Markov model with Gaussian emissions.
 
-        log_probs = np.array(
-            list(map(lambda z: self.observation_log_probability(z), zs))
-        )
-        min_log_prob = np.min(log_probs)
-        revised_scalings = np.exp(min_log_prob - log_probs)
+        Parameters:
+        ---
+        zs -- List of observation sequences.
+        """
+        P_numerators: List[np.ndarray] = []
+        P_denominators: List[np.ndarray] = []
+        mu_numerators: List[np.ndarray] = []
+        mu_denominators: List[np.ndarray] = []
+        sigma_numerators: List[np.ndarray] = []
+        sigma_denominators: List[np.ndarray] = []
+        pis: List[np.ndarray] = []
 
-        E = len(zs)
+        E: int = len(zs)
 
-        for scaling, z in zip(revised_scalings, zs):
+        ksis: List[np.ndarray] = []
+        gammas: List[np.ndarray] = []
+        log_probs_list: List[float] = []
+        z: List[Any]
+        for z in zs:
             self.forward_backward_algorithm(z)
-            gamma = self.gamma
-            ksi = self.ksi
+            log_prob: float = -np.sum(np.log(self.c))
+            ksis.append(self.ksi)
+            gammas.append(self.gamma)
+            log_probs_list.append(log_prob)
+        log_probs: np.ndarray = np.array(log_probs_list)
 
-            P_upper, P_lower = DiscreteHiddenMarkovModel.calculate_inner_transition_probability_sums(
+        #Scaling for each observation when summing over results from multiple observations
+        min_log_prob: float = np.min(log_probs)
+        revised_scalings: np.ndarray = np.exp(min_log_prob - log_probs)
+
+        revised_scaling: int
+        ksi: np.ndarray
+        gamma: np.ndarray
+        for z, gamma, ksi, revised_scaling in zip(zs, gammas, ksis, revised_scalings):
+            P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
                 ksi, gamma
             )
-            P_uppers.append(P_upper * scaling)
-            P_lowers.append(P_lower * scaling)
+            P_numerators.append(P_numerator * revised_scaling)
+            P_denominators.append(P_denominator * revised_scaling)
 
-            mu_upper, mu_lower = self.calculate_mu(z, gamma)
-            mu_uppers.append(mu_upper)
-            mu_lowers.append(mu_lower)
+            mu_numerator, mu_denominator = self.calculate_mu(z, gamma)
+            mu_numerators.append(mu_numerator)
+            mu_denominators.append(mu_denominator)
 
-            sigma_upper, sigma_lower = self.compute_sigma(
+            sigma_numerator, sigma_denominator = self.calculate_sigma(
                 z, self.emission_probability.mu, gamma
             )
-            sigma_uppers.append(sigma_upper)
-            sigma_lowers.append(sigma_lower)
+            sigma_numerators.append(sigma_numerator)
+            sigma_denominators.append(sigma_denominator)
 
             pi = gamma[0, :]
             pis.append(pi)
 
-        self.P = sum(P_uppers) / sum(P_lowers)[:, np.newaxis]
-        self.mu = (sum(mu_uppers) / (sum(mu_lowers)[:, np.newaxis])).reshape(self.M, -1)
-        self.sigma = sum(sigma_uppers) / sum(sigma_lowers)[:, np.newaxis, np.newaxis]
+        self.P = sum(P_numerators) / sum(P_denominators)[:, np.newaxis]
+        self.mu = (sum(mu_numerators) / (sum(mu_denominators)[:, np.newaxis])).reshape(self.M, -1)
+        self.sigma = sum(sigma_numerators) / sum(sigma_denominators)[:, np.newaxis, np.newaxis]
         self.sigma = self.sigma + 1e-1 * np.eye(self.sigma.shape[1])
         self.pi = sum(pis) / E
-        self.emission_probability = GaussianEmissionProbability(self.mu, self.sigma)
 
     @staticmethod
     def calculate_mu(z: list, gamma: np.ndarray):
-        z_array = np.array(z)
-        mu_upper = np.einsum("ij,ik->kj", z_array, gamma)
-        mu_lower = np.sum(gamma, axis=0)
+        """Calculate the kernel of the outer sum in the update equations for mu."""
+        z_array: np.ndarray = np.array(z)
+        mu_numerator: np.ndarray = np.einsum("ij,ik->kj", z_array, gamma)
+        mu_denominator: np.ndarray = np.sum(gamma, axis=0)
 
-        return mu_upper, mu_lower
+        return mu_numerator, mu_denominator
 
     @staticmethod
-    def compute_sigma(z: list, mu: np.ndarray, gamma: np.ndarray):
-        z_array = np.array(z).reshape(gamma.shape[0], -1)
-        T = z_array.shape[0]
-        D = z_array.shape[1]
-        M = gamma.shape[1]
-        sigma = []
+    def calculate_sigma(z: list, mu: np.ndarray, gamma: np.ndarray):
+        z_array: np.ndarray = np.array(z).reshape(gamma.shape[0], -1)
+        T: int = z_array.shape[0]
+        D: int = z_array.shape[1]
+        M: int = gamma.shape[1]
+        sigma: List[float] = []
+        m: int
         for m in range(M):
             comps = []
             for t in range(T):
@@ -677,7 +870,6 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             assert sum_over_t.shape == (D, D)
             sigma.append(sum_over_t)
 
-        sigma_upper = np.array(sigma)
-        sigma_lower = np.sum(gamma, axis=0)
-
-        return sigma_upper, sigma_lower
+        sigma_numerator = np.array(sigma)
+        sigma_denominator = np.sum(gamma, axis=0)
+        return sigma_numerator, sigma_denominator
