@@ -849,11 +849,10 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         o: Any
         for k, o in enumerate(symbols):
             # Indices where observation equals symbol k
-            ts: np.ndarray = np.where(np.array(z) == o)
+            z_is_k = np.array(list(map(lambda x: x == o, z))).astype(int)
             # All zeros
-            partial_gamma: np.ndarray = np.zeros(gamma.shape)
+            partial_gamma: np.ndarray = gamma*z_is_k[:, np.newaxis]
             # Assign non-zero values to rows (times) where observation equals symbol k
-            partial_gamma[ts, :] = gamma[ts, :]
             # Sum over all time-steps
             numerator_sum[k, :] = np.sum(partial_gamma, axis=0)
         denominator_sum: np.ndarray = np.sum(gamma, axis=0)
@@ -878,7 +877,7 @@ class GaussianEmissionProbability:
 
     def eval_to_array(self, z: np.ndarray, x: np.ndarray):
         # Can do apply along axis.
-        return np.array([self.l_function(z, x) for z, x in zip(z, x)])
+        return np.array([self.l_function(z, x) for z, x in zip([z] * x.shape[0], x)])
 
     def l(self, z: List[Any]):
         """Creates a 2-dimensional array of emission probabilities for the observations at various times, for various states.
@@ -942,8 +941,6 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
     ):
         self.states: List[Any] = states
         self.state_ids: np.ndarray = np.arange(self.M).astype(int)
-        self.mu = mu
-        self.sigma = sigma
         self.enable_warnings: bool = enable_warnings
         self.frozen_mask = frozen_mask
         self.transition_probability: TransitionProbability = TransitionProbability(
