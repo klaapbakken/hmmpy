@@ -572,17 +572,16 @@ class HiddenMarkovModel:
         min_log_prob: float = np.min(log_probs)
         revised_scalings: np.ndarray = np.exp(min_log_prob - log_probs)
 
-        revised_scaling: int
         ksi: np.ndarray
         gamma: np.ndarray
-        for gamma, ksi, revised_scaling in zip(gammas, ksis, revised_scalings):
+        for gamma, ksi in zip(gammas, ksis):
             P_numerator: np.ndarray
             P_denominator: np.ndarray
             P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
                 ksi, gamma
             )
-            P_numerators.append(P_numerator * revised_scaling)
-            P_denominators.append(P_denominator * revised_scaling)
+            P_numerators.append(P_numerator)
+            P_denominators.append(P_denominator)
             pi = gamma[0, :]
             pis.append(pi)
 
@@ -600,7 +599,7 @@ class HiddenMarkovModel:
         gamma -- 2-dimensional array. First axis is time index, second is state index. 
         """
         numerator_sum: np.ndarray = np.sum(ksi, axis=0)
-        denominator_sum: np.ndarray = np.sum(gamma, axis=0)
+        denominator_sum: np.ndarray = np.sum(gamma[:-1, :], axis=0)
         return numerator_sum, denominator_sum
 
     def observation_log_probability(self, z: List[Any]) -> float:
@@ -806,24 +805,22 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
 
         # Scaling for each observation when summing over results from multiple observations
         min_log_prob: float = np.min(log_probs)
-        revised_scalings: np.ndarray = np.exp(min_log_prob - log_probs)
 
-        revised_scaling: int
         ksi: np.ndarray
         gamma: np.ndarray
-        for gamma, ksi, revised_scaling in zip(gammas, ksis, revised_scalings):
+        for gamma, ksi in zip(gammas, ksis):
             P_numerator: np.ndarray
             P_denominator: np.ndarray
             P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
                 ksi, gamma
             )
-            P_numerators.append(P_numerator * revised_scaling)
-            P_denominators.append(P_denominator * revised_scaling)
+            P_numerators.append(P_numerator)
+            P_denominators.append(P_denominator)
             b_numerator, b_denominator = self.calculate_inner_emission_probability_sums(
                 z, gamma, self.symbols
             )
-            b_numerators.append(b_numerator * revised_scaling)
-            b_denominators.append(b_denominator * revised_scaling)
+            b_numerators.append(b_numerator)
+            b_denominators.append(b_denominator)
 
             pi = gamma[0, :]
             pis.append(pi)
@@ -1001,19 +998,14 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
             log_probs_list.append(log_prob)
         log_probs: np.ndarray = np.array(log_probs_list)
 
-        # Scaling for each observation when summing over results from multiple observations
-        min_log_prob: float = np.min(log_probs)
-        revised_scalings: np.ndarray = np.exp(min_log_prob - log_probs)
-
-        revised_scaling: int
         ksi: np.ndarray
         gamma: np.ndarray
-        for z, gamma, ksi, revised_scaling in zip(zs, gammas, ksis, revised_scalings):
+        for z, gamma, ksi in zip(zs, gammas, ksis):
             P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
                 ksi, gamma
             )
-            P_numerators.append(P_numerator * revised_scaling)
-            P_denominators.append(P_denominator * revised_scaling)
+            P_numerators.append(P_numerator)
+            P_denominators.append(P_denominator)
 
             mu_numerator, mu_denominator = self.calculate_mu(z, gamma)
             mu_numerators.append(mu_numerator)
