@@ -550,43 +550,27 @@ class HiddenMarkovModel:
         ---
         zs -- A list of observation sequences. 
         """
-        P_numerators: List[np.ndarray] = []
-        P_denominators: List[np.ndarray] = []
-        pis = []
+        P_numerators_sum: np.ndarray = np.zeros((self.M, self.M))
+        P_denominators_sum: np.ndarray = np.zeros((self.M, ))
+        pis_sum: np.ndarray = np.zeros((self.M, ))
 
         # Compute the log-probability for each of the observation sequences.
         E: int = len(zs)
-        ksis: List[np.ndarray] = []
-        gammas: List[np.ndarray] = []
-        log_probs_list: List[float] = []
         z: List[Any]
         for z in zs:
             self.forward_backward_algorithm(z)
-            log_prob: float = -np.sum(np.log(self.c))
-            ksis.append(self.ksi)
-            gammas.append(self.gamma)
-            log_probs_list.append(log_prob)
-        log_probs: np.ndarray = np.array(log_probs_list)
-
-        # Scaling for each observation when summing over results from multiple observations
-        min_log_prob: float = np.min(log_probs)
-        revised_scalings: np.ndarray = np.exp(min_log_prob - log_probs)
-
-        ksi: np.ndarray
-        gamma: np.ndarray
-        for gamma, ksi in zip(gammas, ksis):
             P_numerator: np.ndarray
             P_denominator: np.ndarray
             P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
-                ksi, gamma
+                self.ksi, self.gamma
             )
-            P_numerators.append(P_numerator)
-            P_denominators.append(P_denominator)
-            pi = gamma[0, :]
-            pis.append(pi)
+            P_numerators_sum += P_numerator
+            P_denominators_sum += P_denominator
+            pi = self.gamma[0, :]
+            pis_sum += pi
 
-        self.P = sum(P_numerators) / sum(P_denominators)[:, np.newaxis]
-        self.pi = sum(pis) / E
+        self.P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+        self.pi = pis_sum / E
         
 
     @staticmethod
@@ -802,9 +786,6 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
             gammas.append(self.gamma)
             log_probs_list.append(log_prob)
         log_probs: np.ndarray = np.array(log_probs_list)
-
-        # Scaling for each observation when summing over results from multiple observations
-        min_log_prob: float = np.min(log_probs)
 
         ksi: np.ndarray
         gamma: np.ndarray
