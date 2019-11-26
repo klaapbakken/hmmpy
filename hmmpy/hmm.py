@@ -109,13 +109,10 @@ class TransitionProbability:
         self,
         transition_probability: Callable[[Any, Any], float],
         states: List[Any],
-        frozen_mask=None,
         enable_warnings=False,
     ):
         self.states: List[Any] = states
         self.state_ids: np.ndarray = np.arange(self.M).astype(int)
-        # Positions that are zero in "frozen_mask" correspond to zero transition probabilities in the transition matrix
-        self.frozen_mask: np.ndarray = frozen_mask
         self.enable_warnings = enable_warnings
         self.P_function: Callable[[Any, Any], float] = transition_probability
 
@@ -157,10 +154,7 @@ class TransitionProbability:
 
     @P.setter
     def P(self, value: np.ndarray):
-        if self.frozen_mask is not None:
-            unscaled_P = value * self.frozen_mask
-        else:
-            unscaled_P: np.ndarray = value
+        unscaled_P: np.ndarray = value
         sum_unscaled_P: np.ndarray = np.sum(unscaled_P, axis=1)
         scaled_P = (unscaled_P.T / sum_unscaled_P).T
         if (
@@ -252,17 +246,16 @@ class HiddenMarkovModel:
         initial_probability: Callable[[int], float],
         states: List[Any],
         enable_warnings: bool = False,
-        frozen_mask: np.ndarray = None,
+        update_matrix: np.ndarray = None,
     ):
         self.states: List[Any] = states
         self.state_ids: np.ndarray = np.arange(self.M).astype(int)
         self.enable_warnings: bool = enable_warnings
-        self.frozen_mask = frozen_mask
+        self.update_matrix = update_matrix
         self.transition_probability: TransitionProbability = TransitionProbability(
             transition_probability,
             self.states,
-            enable_warnings=self.enable_warnings,
-            frozen_mask=self.frozen_mask
+            enable_warnings=self.enable_warnings
         )
         self.emission_probability: EmissionProbability = EmissionProbability(
             emission_probability, self.states, enable_warnings=self.enable_warnings
@@ -569,7 +562,16 @@ class HiddenMarkovModel:
             pi = self.gamma[0, :]
             pis_sum += pi
 
-        self.P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+        if self.update_matrix is not None:
+            previous_P = self.P
+            new_P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+            P = previous_P
+            indices_to_update = self.update_matrix.nonzero()
+            row_indices, column_indices = indices_to_update
+            P[row_indices, column_indices] = new_P[row_indices, column_indices]
+        else:
+            P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+        self.P = P
         self.pi = pis_sum / E
         
 
@@ -727,20 +729,19 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         states: List[Any],
         symbols: List[Any],
         enable_warnings=False,
-        frozen_mask=None,
+        update_matrix=None,
     ):
         self.states = states
         self.state_ids: np.ndarray = np.arange(self.M).astype(int)
         self.symbols = symbols
 
-        self.frozen_mask = frozen_mask
+        self.update_matrix = update_matrix
         self.enable_warnings: bool = enable_warnings
 
         self.transition_probability: TransitionProbability = TransitionProbability(
             transition_probability,
             self.states,
             enable_warnings=self.enable_warnings,
-            frozen_mask=self.frozen_mask,
         )
         self.emission_probability: EmissionProbability = DiscreteEmissionProbability(
             emission_probability,
@@ -767,48 +768,46 @@ class DiscreteHiddenMarkovModel(HiddenMarkovModel):
         ---
         zs -- List of observation sequences.
         """
-        P_numerators: List[np.ndarray] = []
-        P_denominators: List[np.ndarray] = []
-        b_numerators = []
-        b_denominators = []
-        pis = []
+        P_numerators_sum: np.ndarray = np.zeros((self.M, self.M))
+        P_denominators_sum: np.ndarray = np.zeros((self.M, ))
+        b_numerators_sum: np.ndarray = np.zeros((len(self.symbols), self.M))
+        b_denominators_sum: np.ndarray = np.zeros((self.M,))
+        pis_sum: np.ndarray = np.zeros((self.M, ))
 
         E: int = len(zs)
-        # Compute the log-probability for each of the observation sequences.
-        ksis: List[np.ndarray] = []
-        gammas: List[np.ndarray] = []
-        log_probs_list: List[float] = []
         z: List[Any]
         for z in zs:
             self.forward_backward_algorithm(z)
-            log_prob: float = -np.sum(np.log(self.c))
-            ksis.append(self.ksi)
-            gammas.append(self.gamma)
-            log_probs_list.append(log_prob)
-        log_probs: np.ndarray = np.array(log_probs_list)
-
-        ksi: np.ndarray
-        gamma: np.ndarray
-        for gamma, ksi in zip(gammas, ksis):
             P_numerator: np.ndarray
             P_denominator: np.ndarray
             P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
-                ksi, gamma
+                self.ksi, self.gamma
             )
-            P_numerators.append(P_numerator)
-            P_denominators.append(P_denominator)
+            P_numerators_sum += P_numerator
+            P_denominators_sum += P_denominator
+
             b_numerator, b_denominator = self.calculate_inner_emission_probability_sums(
-                z, gamma, self.symbols
+                z, self.gamma, self.symbols
             )
-            b_numerators.append(b_numerator)
-            b_denominators.append(b_denominator)
+            b_numerators_sum += b_numerator
+            b_denominators_sum += b_denominator
 
-            pi = gamma[0, :]
-            pis.append(pi)
+            pi = self.gamma[0, :]
+            pis_sum += pi
 
-        self.P = sum(P_numerators) / sum(P_denominators)[:, np.newaxis]
-        self.b = sum(b_numerators) / sum(b_denominators)
-        self.pi = sum(pis) / E
+        if self.update_matrix is not None:
+            previous_P = self.P
+            new_P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+            P = previous_P
+            indices_to_update = self.update_matrix.nonzero()
+            row_indices, column_indices = indices_to_update
+            P[row_indices, column_indices] = new_P[row_indices, column_indices]
+        else:
+            P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+        
+        self.P = P
+        self.b = b_numerators_sum / b_denominators_sum
+        self.pi = pis_sum / E
 
     @staticmethod
     def calculate_inner_emission_probability_sums(z, gamma, symbols):
@@ -915,17 +914,16 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         mu: list,
         sigma: list,
         enable_warnings: bool = False,
-        frozen_mask: np.ndarray = None,
+        update_matrix: np.ndarray = None,
     ):
         self.states: List[Any] = states
         self.state_ids: np.ndarray = np.arange(self.M).astype(int)
         self.enable_warnings: bool = enable_warnings
-        self.frozen_mask = frozen_mask
+        self.update_matrix = update_matrix
         self.transition_probability: TransitionProbability = TransitionProbability(
             transition_probability,
             self.states,
-            enable_warnings=self.enable_warnings,
-            frozen_mask=self.frozen_mask,
+            enable_warnings=self.enable_warnings
         )
         self.emission_probability: GaussianEmissionProbability = GaussianEmissionProbability(
             mu, sigma
@@ -957,59 +955,59 @@ class GaussianHiddenMarkovModel(HiddenMarkovModel):
         ---
         zs -- List of observation sequences.
         """
-        P_numerators: List[np.ndarray] = []
-        P_denominators: List[np.ndarray] = []
-        mu_numerators: List[np.ndarray] = []
-        mu_denominators: List[np.ndarray] = []
-        sigma_numerators: List[np.ndarray] = []
-        sigma_denominators: List[np.ndarray] = []
-        pis: List[np.ndarray] = []
+        D = len(zs[0][0])
+        for z in zs:
+            assert all(map(lambda x: len(x) == D, z))
+        P_numerators_sum: np.ndarray = np.zeros((self.M, self.M))
+        P_denominators_sum: np.ndarray = np.zeros((self.M, ))
+        pis_sum: np.ndarray = np.zeros((self.M, ))
+        mu_numerators_sum: np.ndarray = np.zeros((self.M, D))
+        mu_denominators_sum: np.ndarray = np.zeros((self.M,))
+        sigma_numerators_sum: np.ndarray = np.zeros((self.M, D, D))
+        sigma_denominators_sum: np.ndarray = np.zeros((self.M, ))
 
         E: int = len(zs)
-
-        ksis: List[np.ndarray] = []
-        gammas: List[np.ndarray] = []
-        log_probs_list: List[float] = []
         z: List[Any]
         for z in zs:
             self.forward_backward_algorithm(z)
-            log_prob: float = -np.sum(np.log(self.c))
-            ksis.append(self.ksi)
-            gammas.append(self.gamma)
-            log_probs_list.append(log_prob)
-        log_probs: np.ndarray = np.array(log_probs_list)
-
-        ksi: np.ndarray
-        gamma: np.ndarray
-        for z, gamma, ksi in zip(zs, gammas, ksis):
+            P_numerator: np.ndarray
+            P_denominator: np.ndarray
             P_numerator, P_denominator = self.calculate_inner_transition_probability_sums(
-                ksi, gamma
+                self.ksi, self.gamma
             )
-            P_numerators.append(P_numerator)
-            P_denominators.append(P_denominator)
+            P_numerators_sum += P_numerator
+            P_denominators_sum += P_denominator
+            pi = self.gamma[0, :]
+            pis_sum += pi
 
-            mu_numerator, mu_denominator = self.calculate_mu(z, gamma)
-            mu_numerators.append(mu_numerator)
-            mu_denominators.append(mu_denominator)
+            mu_numerator, mu_denominator = self.calculate_mu(z, self.gamma)
+            mu_numerators_sum += mu_numerator
+            mu_denominators_sum += mu_denominator
 
             sigma_numerator, sigma_denominator = self.calculate_sigma(
-                z, self.emission_probability.mu, gamma
+                z, self.emission_probability.mu, self.gamma
             )
-            sigma_numerators.append(sigma_numerator)
-            sigma_denominators.append(sigma_denominator)
+            sigma_numerators_sum += sigma_numerator
+            sigma_denominators_sum += sigma_denominator
 
-            pi = gamma[0, :]
-            pis.append(pi)
-
-        self.P = sum(P_numerators) / sum(P_denominators)[:, np.newaxis]
-        self.mu = (sum(mu_numerators) / (sum(mu_denominators)[:, np.newaxis])).reshape(
+        if self.update_matrix is not None:
+            previous_P = self.P
+            new_P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+            P = previous_P
+            indices_to_update = self.update_matrix.nonzero()
+            row_indices, column_indices = indices_to_update
+            P[row_indices, column_indices] = new_P[row_indices, column_indices]
+        else:
+            P = P_numerators_sum / P_denominators_sum[:, np.newaxis]
+        self.P = P
+        self.pi = pis_sum / E
+        self.mu = (mu_numerators_sum / mu_denominators_sum[:, np.newaxis]).reshape(
             self.M, -1
         )
         self.sigma = (
-            sum(sigma_numerators) / sum(sigma_denominators)[:, np.newaxis, np.newaxis]
+            sigma_numerators_sum / sigma_denominators_sum[:, np.newaxis, np.newaxis]
         )
         self.sigma = self.sigma + 1e-1 * np.eye(self.sigma.shape[1])
-        self.pi = sum(pis) / E
 
     @staticmethod
     def calculate_mu(z: list, gamma: np.ndarray):
