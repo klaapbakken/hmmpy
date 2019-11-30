@@ -2,6 +2,9 @@ import numpy as np
 from numpy import ma
 from numpy.linalg import det
 
+from tqdm import tqdm
+from tqdm import trange
+
 from scipy.stats import multivariate_normal
 
 from math import exp
@@ -612,7 +615,8 @@ class HiddenMarkovModel:
             list(map(self.observation_log_probability, zs))
         )
         history.append(initial_log_probability)
-        for _ in range(n):
+        print(f"Running {n} iterations of Baum-Welch")
+        for _ in trange(n):
             self.baum_welch(zs)
             current_log_probability: float = np.mean(
                 list(map(self.observation_log_probability, zs))
