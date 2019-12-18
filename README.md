@@ -1,3 +1,5 @@
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/klaapbakken/hmmpy/4a6cee6b5a23dafce6e8b626879324c1a12c62aa)
+
 The Python package `hmmpy` implements three distinct classes that are intended to be exposed to the user. The classes are:
   * `HiddenMarkovModel`
   * `DiscreteHiddenMarkovModel`
@@ -7,4 +9,4 @@ The classes differ in what they assume about the observations. The class `Hidden
 
 After an object has been instantiated one has access to methods such as `decode`, which returns the estimated hidden state sequence and `reestimate`, which runs Baum-Welch a given number of times in an effort to learn the model parameters. During this procedure the internal representation of learnable parameters is updated after each iteration.
 
-Binder notebooks with usage examples will be provided. 
+Interactive notebooks showing basic usage examples can be found be going into the `notebooks` folder via the Binder badge.
