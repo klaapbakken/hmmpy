@@ -1,3 +1,7 @@
+![PyPI - License](https://img.shields.io/pypi/l/hmmpy?style=for-the-badge)
+
+![PyPI](https://img.shields.io/pypi/v/hmmpy?style=for-the-badge)
+
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/klaapbakken/hmmpy/4a6cee6b5a23dafce6e8b626879324c1a12c62aa)
 
 The Python package `hmmpy` implements three distinct classes that are intended to be exposed to the user. The classes are:
