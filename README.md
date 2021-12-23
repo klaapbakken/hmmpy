@@ -1,3 +1,5 @@
+23.12.2021: I've deleted this package from PyPI. There are other packages, such as `pomegranate`, that both provide similar functionality, is being actively maintained and is of much higher quality. I therefore see no reason to keep this package there. 
+
 ![PyPI - License](https://img.shields.io/pypi/l/hmmpy?style=for-the-badge)
 
 ![PyPI](https://img.shields.io/pypi/v/hmmpy?style=for-the-badge)
